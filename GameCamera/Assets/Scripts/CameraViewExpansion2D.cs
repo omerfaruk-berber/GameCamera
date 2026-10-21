@@ -82,8 +82,9 @@ public class CameraViewExpansion2D : MonoBehaviour
     {
         GetExpansion(controlledCamera.aspect, out float sizeIncrease, out Vector2 centerOffset);
         controlledCamera.orthographicSize = baseOrthographicSize + sizeIncrease;
-        cameraController.SetViewOffset(centerOffset);
-        appliedViewOffset = centerOffset;
+        // Kamera döndüğünde de sağ/sol, ekranın sağ/sol yönünü ifade eder.
+        appliedViewOffset = MainCamera.CameraPlaneToWorldOffset(transform.rotation, centerOffset);
+        cameraController.SetViewOffset(appliedViewOffset);
     }
 
     private void GetExpansion(float aspect, out float sizeIncrease, out Vector2 centerOffset)
@@ -101,6 +102,26 @@ public class CameraViewExpansion2D : MonoBehaviour
         centerOffset = new Vector2((right - left) * 0.5f, 0f);
     }
 
+    internal void GetPreviewView(
+        out Vector3 baseCenter, out float baseSize, out Vector3 expandedCenter, out float expandedSize)
+    {
+        Camera previewCamera = GetComponent<Camera>();
+        bool expansionApplied = Application.isPlaying && controlledCamera != null;
+        baseSize = expansionApplied ? baseOrthographicSize : previewCamera.orthographicSize;
+        baseCenter = transform.position;
+        if (expansionApplied)
+        {
+            baseCenter -= (Vector3)appliedViewOffset;
+            expandedCenter = transform.position;
+            expandedSize = previewCamera.orthographicSize;
+            return;
+        }
+
+        GetExpansion(previewCamera.aspect, out float sizeIncrease, out Vector2 centerOffset);
+        expandedSize = baseSize + sizeIncrease;
+        expandedCenter = baseCenter + (Vector3)MainCamera.CameraPlaneToWorldOffset(transform.rotation, centerOffset);
+    }
+
     private void OnDrawGizmos()
     {
         if (!showScenePreview || !isActiveAndEnabled)
@@ -115,24 +136,18 @@ public class CameraViewExpansion2D : MonoBehaviour
         }
 
         float aspect = Mathf.Max(0.0001f, previewCamera.aspect);
-        bool expansionApplied = Application.isPlaying && controlledCamera != null;
-        float baseSize = expansionApplied ? baseOrthographicSize : previewCamera.orthographicSize;
-        Vector2 baseCenter = (Vector2)transform.position;
+        GetPreviewView(out Vector3 baseCenter, out float baseSize, out Vector3 expandedCenter, out float expandedSize);
+        Vector3 relativeBaseCenter = Quaternion.Inverse(transform.rotation) * (baseCenter - expandedCenter);
+        Rect baseRect = GetViewRect(relativeBaseCenter, baseSize, aspect);
+        Rect expandedRect = GetViewRect(Vector2.zero, expandedSize, aspect);
 
-        // Play sırasında uygulanmış kaymayı çıkar; temel kadrajı iki kez kaydırma.
-        if (expansionApplied)
-        {
-            baseCenter -= appliedViewOffset;
-        }
-
-        GetExpansion(aspect, out float sizeIncrease, out Vector2 centerOffset);
-        Rect baseRect = GetViewRect(baseCenter, baseSize, aspect);
-        Rect expandedRect = GetViewRect(baseCenter + centerOffset, baseSize + sizeIncrease, aspect);
-
-        // Çizimi 2B oyun düzlemine (Z = 0) yerleştir; sahne verilerini değiştirme.
+        // Çizimleri kameranın dönüşüyle hizala; merkez derinliği oyun düzleminden alınır.
+        float depth = Mathf.Abs(transform.forward.z) > 0.0001f ? -expandedCenter.z / transform.forward.z : 1f;
+        depth = Mathf.Max(previewCamera.nearClipPlane, depth);
         Color previousColor = Gizmos.color;
         Matrix4x4 previousMatrix = Gizmos.matrix;
-        Gizmos.matrix = Matrix4x4.identity;
+        Gizmos.matrix = Matrix4x4.TRS(
+            expandedCenter + transform.forward * depth, transform.rotation, Vector3.one);
         Gizmos.color = new Color(0.2f, 1f, 0.4f, 0.12f);
 
         // Yalnız eklenen alanları boya; köşelerde üst üste saydamlık oluşturma.
@@ -147,8 +162,10 @@ public class CameraViewExpansion2D : MonoBehaviour
         Gizmos.DrawWireCube(expandedRect.center, expandedRect.size);
 
 #if UNITY_EDITOR
-        UnityEditor.Handles.Label(new Vector3(baseRect.xMin, baseRect.yMin, 0f), "Base View");
-        UnityEditor.Handles.Label(new Vector3(expandedRect.xMin, expandedRect.yMax, 0f), "Expanded View");
+        UnityEditor.Handles.Label(Gizmos.matrix.MultiplyPoint3x4(
+            new Vector3(baseRect.xMin, baseRect.yMin, 0f)), "Base View");
+        UnityEditor.Handles.Label(Gizmos.matrix.MultiplyPoint3x4(
+            new Vector3(expandedRect.xMin, expandedRect.yMax, 0f)), "Expanded View");
 #endif
 
         Gizmos.matrix = previousMatrix;
