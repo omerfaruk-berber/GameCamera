@@ -314,6 +314,7 @@ GameObject:
   - component: {fileID: 519420031}
   - component: {fileID: 519420029}
   - component: {fileID: 519420030}
+  - component: {fileID: 519420034}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -455,6 +456,28 @@ MonoBehaviour:
   offset: {x: 0, y: 0}
   smoothTime: 0.2
   snapOnStart: 1
+--- !u!114 &519420034
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 519420028}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7edbf6599e64b6095f6b81d14a31a97, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CameraTargetGroup2D
+  targets:
+  - {fileID: 263905496}
+  - {fileID: 369318567}
+  includeRendererBounds: 1
+  padding: {x: 1, y: 1}
+  minimumSize: 5
+  zoomDamping: 0.35
+  rotateToGroup: 0
+  rotationDamping: 0.15
+  showScenePreview: 1
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0

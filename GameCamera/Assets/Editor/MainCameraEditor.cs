@@ -8,9 +8,11 @@ public class MainCameraEditor : Editor
     private Editor expansionEditor;
     private Editor lookAtEditor;
     private Editor zonesEditor;
+    private Editor groupEditor;
     private bool expansionExpanded = true;
     private bool lookAtExpanded = true;
     private bool zonesExpanded = true;
+    private bool groupExpanded = true;
 
     public override void OnInspectorGUI()
     {
@@ -32,6 +34,7 @@ public class MainCameraEditor : Editor
         DrawFeature<CameraViewExpansion2D>("View Expansion", ref expansionExpanded, ref expansionEditor);
         DrawFeature<CameraLookAtTarget2D>("Look At Target", ref lookAtExpanded, ref lookAtEditor);
         DrawFeature<CameraDeadSoftZone2D>("Dead Zone & Soft Zone", ref zonesExpanded, ref zonesEditor);
+        DrawFeature<CameraTargetGroup2D>("Target Group Camera", ref groupExpanded, ref groupEditor);
     }
 
     private void DrawBackgroundSettings()
@@ -63,6 +66,7 @@ public class MainCameraEditor : Editor
         AddFeatureMenuItem<CameraViewExpansion2D>(menu, "View Expansion", "Sağa, sola veya her yöne görüş genişletme.");
         AddFeatureMenuItem<CameraLookAtTarget2D>(menu, "Look At Target", "Kamerayı bakış hedefine döndürme.");
         AddFeatureMenuItem<CameraDeadSoftZone2D>(menu, "Dead Zone & Soft Zone", "Serbest hareket ve yumuşak takip bölgeleri.");
+        AddFeatureMenuItem<CameraTargetGroup2D>(menu, "Target Group Camera", "Birden fazla hedefi aynı kadrajda tutma.");
         menu.ShowAsContext();
     }
 
@@ -144,6 +148,7 @@ public class MainCameraEditor : Editor
         ReleaseEditor(ref expansionEditor);
         ReleaseEditor(ref lookAtEditor);
         ReleaseEditor(ref zonesEditor);
+        ReleaseEditor(ref groupEditor);
     }
 
     private static void ReleaseEditor(ref Editor cachedEditor)

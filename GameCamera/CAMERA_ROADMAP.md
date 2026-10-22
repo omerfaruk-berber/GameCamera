@@ -14,7 +14,7 @@ türlerinin ihtiyaçlarını ayrı C# dosyalarıyla eklemek. Kod, alan ve metot 
 - `offset` ile hedefe göre kadrajı, `smoothTime` ile takip yumuşaklığını ayarlamak.
 - Kameranın mevcut dünya Z konumunu korumak; hedefin Z hareketini izlememek.
 - Başlangıçta isteğe bağlı olarak hedefe anında yerleşmek.
-- Hedef atanmamışsa ya da silinmişse kamerayı bulunduğu yerde tutmak.
+- Geçerli bir grup veya tek hedef yoksa kamerayı bulunduğu yerde tutmak.
 - Başka kodların `SetTarget` ve `SnapToTarget` ile kamerayı yönlendirebilmesi.
 
 Bu gövde standart XY düzlemindeki 2B kamera içindir. Varsayılan dönüş `(0, 0, 0)`;
@@ -28,6 +28,7 @@ Takip hedefi kameradan bağımsız olmalı; kamera hedefin alt nesnesi yapılmam
 - `PlatformerCamera2D.cs`: yatay ağırlıklı takip ve hareket yönüne doğru bakış.
 - `TopDownCamera2D.cs`: üstten görünüm için kadraj davranışı.
 - Dead Zone / Soft Zone davranışı `CameraDeadSoftZone2D.cs` ile eklendi (aşağıda).
+- Çoklu hedef takibi `CameraTargetGroup2D.cs` ile eklendi (aşağıda).
 
 ## 3. Aşama — Ek davranışlar (sonra)
 
@@ -69,7 +70,7 @@ cameraController.SetTarget(respawnedPlayerTransform, snapImmediately: true);
 // Mevcut hedefe anında yerleş; önceki takip hızını sıfırla.
 cameraController.SnapToTarget();
 
-// Takibi bırak; kamera son konumunda kalır.
+// Tek hedef takibini bırak; etkin hedef grubu varsa grup takibi sürer.
 cameraController.SetTarget(null);
 
 // Kamera arka planını siyah yap; düz renk arka plan modunu etkinleştir.
@@ -120,10 +121,17 @@ Standart ortografik kameranın görüntü oranı korunur: sağa veya sola geniş
 bu işlem yakınlaştırma değil, daha fazla alan gösteren uzaklaştırmadır.
 Takip sırasında karaktere göre sağ/sol kadraj korunur; hedef yokken de çalışır.
 
-Bileşen etkinleştiğinde Camera üzerindeki `Size` değerini başlangıç boyutu
-olarak alır. Etkinken boyutu bu bileşen yönetir; başlangıç boyutunu değiştirmek
-için bileşeni kapat, Camera `Size` değerini ayarla ve yeniden aç.
-Bileşen kapatıldığında eklediği genişleme ve kadraj kayması geri alınır.
+View Expansion ve Target Group Camera ortak bir başlangıç boyutu kullanır.
+İlk etkinleşen özellik Camera üzerindeki `Size` değerini kaydeder; diğeri aynı
+değeri paylaşır. `MainCamera`, genişlemeyi temel boyuta ekleyerek uygular; geçerli
+bir hedef grubu varsa temel boyut grup kadrajından gelir. Özelliklerin eklenme
+veya açılma sırası boyutu biriktirmez.
+
+Başlangıç boyutunu elle değiştirmek için **hem View Expansion hem Target Group
+Camera özelliklerini kapat**, Camera `Size` değerini ayarla ve özellikleri yeniden
+aç. İlk açılan özellik yeni başlangıç boyutunu kaydeder. Son boyut özelliği de
+kapatıldığında bu başlangıç değeri geri yüklenir. View Expansion kapatıldığında
+kendi genişlemesi ve kadraj kayması geri alınır; etkin grup kadrajı devam eder.
 `MainCamera.SetViewOffset` ek davranışlar için tek kadraj uygulama noktasıdır;
 bu sürümde bu noktayı yalnızca `CameraViewExpansion2D` yönetir.
 
@@ -163,7 +171,8 @@ değiştirmez. Önizleme, Camera'nın görüntü oranını kullanır.
 
 `CameraLookAtTarget2D.cs` bileşenini aynı kamera nesnesine ekle:
 
-- `Look At Target`: kameranın bakacağı hedef. Boşsa `MainCamera.Target` kullanılır.
+- `Look At Target`: kameranın bakacağı hedef. Boşsa geçerli hedef grubunun merkezi,
+  grup yoksa `MainCamera.Target` kullanılır.
 - `Rotation Damping`: dönüş yumuşama süresi; `0` hedefe anında döner.
 - `Restore Rotation On Disable`: bileşen kapatılınca önceki dönüşü geri yükler.
 - `Show Scene Preview`: turuncu hedef çizgisini ve hedef işaretini gösterir.
@@ -173,17 +182,19 @@ Kamera konumunu ve Z değerini değiştirmez. 2B sprite düzlemine eğik bakıld
 görüntü eğilir/sıkışır; bu etkiyi istemediğinde bileşeni kapatabilirsin.
 Yumuşak dönüşte hareket eden hedefe bakış zamanla yaklaşır; tam ve anlık yönelme
 için `Rotation Damping = 0` kullan. Hedef yoksa veya kamera ile aynı konumdaysa
-dönüş değiştirilmez. Çok büyük hareketler ve yumuşak dönüşte hedefin her karede
-kadraj içinde kalması garanti edilmez.
+dönüş değiştirilmez. Tek hedef takibinde çok büyük hareketler ve yumuşak dönüşte
+hedefin her karede kadraj içinde kalması garanti edilmez; Target Group Camera
+etkinse grup üyeleri için ek boyut hesabı uygulanır.
 
 `SetLookAtTarget(newTarget, snapImmediately: true)` yeni hedefe anında döner.
-`null` verilmesi takip hedefine geri döner; dönüşü durdurmak için bileşeni kapat.
+`null` verilmesi grup merkezine veya takip hedefine geri döner; dönüşü durdurmak için bileşeni kapat.
 `MainCamera` hedefi boş olsa da özel bir bakış hedefiyle dönüş çalışır.
 
 ## Dead Zone & Soft Zone (eklendi)
 
 `CameraDeadSoftZone2D.cs` bileşenini aynı kamera nesnesine ekle.
-Takip edilecek karakter `MainCamera.Target` alanından alınır.
+Takip edilecek karakter `MainCamera.Target` alanından alınır; Target Group Camera
+etkin ve grupta geçerli hedef varsa aynı bölgeler grup merkezine uygulanır.
 
 | Alan | Anlamı |
 | --- | --- |
@@ -210,12 +221,66 @@ Kadraj referansı, takip hedefinin konumuna `MainCamera.Offset` ve görüş
 genişletmesinin kayması eklenerek hesaplanır. Offset kullanıyorsan bölgeler
 karakterin kendisine değil bu kaydırılmış referans noktasına uygulanır.
 
+## Target Group Camera (eklendi)
+
+`MainCamera > Add Feature > Target Group Camera` ile ayrı
+`CameraTargetGroup2D.cs` bileşenini ekle. `Targets` listesine iki dövüşçü, co-op
+oyuncuları veya aynı kadrajda tutulacak diğer nesneleri sürükle.
+
+| Alan | Anlamı |
+| --- | --- |
+| `Targets` | Birlikte takip edilecek `Transform` listesi. |
+| `Include Renderer Bounds` | Varsayılan açık. Etkin Renderer sınırlarını kadraja dahil eder; uygun Renderer yoksa hedefin konumunu kullanır. |
+| `Padding` | Hedef sınırlarına eklenecek X/Y boşluğu; dünya birimi cinsindendir. |
+| `Minimum Size` | En küçük ortografik boyut. Varsayılan `5`. |
+| `Zoom Damping` | Yakınlaşmanın yumuşama süresi. Varsayılan `0.35` saniye; `0` anında yakınlaşır. |
+| `Rotate To Group` | İsteğe bağlı olarak grup merkezine döner. Varsayılan kapalı. |
+| `Rotation Damping` | Grup dönüşünün yumuşama süresi. Varsayılan `0.15` saniye. |
+| `Show Scene Preview` | Scene üzerinde grup sınırlarını ve üyeleri gösterir. Gizmos açık olmalıdır. |
+
+Kamera grup sınırlarının merkezini mevcut `Smooth Time` ile takip eder; Dead Zone
+& Soft Zone açıksa konumu bu bölgeler yönetir. Kamera Z konumunu korur. Ortografik
+2B kamerada uzaklaşma, kamerayı Z boyunca taşımak yerine `Size` artırılarak yapılır.
+Gerekli boyut ekran oranına, kameranın gerçek yumuşatılmış konumuna ve son dönüşüne
+göre hesaplanır. Hedefler ayrıldığında kadrajı korumak için hemen uzaklaşır;
+yaklaştıklarında `Zoom Damping` ile yumuşak yakınlaşır. Sert bir maksimum boyut yoktur.
+
+Boş, silinmiş ve hiyerarşide etkin olmayan hedefler atlanır. Grupta geçerli hedef
+kalmadığında veya özellik kapatıldığında normal `MainCamera.Target` takibi ve
+özelliklerin paylaştığı başlangıç boyutu geri gelir. View Expansion açıksa genişleme bu
+temel boyuta eklenmeye devam eder. Etkin Look At bileşeni dönüşte önceliklidir;
+onun özel hedefi boşsa grup merkezini kullanır. Look At kapalıyken `Rotate To Group`
+ile gruba dönülebilir. Varsayılan kapalı ayar düz 2B görünümü korur.
+
+```csharp
+// Gruba hedef ekle; zaten varsa tekrar ekleme.
+targetGroup.AddTarget(playerTransform);
+
+// Bir hedefi takip grubundan çıkar.
+targetGroup.RemoveTarget(playerTransform);
+
+// Grubun geçerli hedeflerini kapsayan dünya sınırlarını oku.
+if (targetGroup.TryGetGroupBounds(out Bounds groupBounds))
+{
+    Vector3 groupCenter = groupBounds.center;
+}
+
+// Bütün hedefleri çıkar; normal tek hedef takibine dön.
+targetGroup.ClearTargets();
+```
+
+`targetGroup`, bir `CameraTargetGroup2D` referansıdır. Sahne çizimleri grup
+sınırlarını ve geçerli üyeleri gösterir; `Show Scene Preview` ile kapatılabilir.
+
 ## Birlikte çalışma sırası
 
-`MainCamera` önce normal takibi veya bölge takibini hesaplar, ardından Look At
-dönüşünü uygular. Ek bileşenler bağımsız `LateUpdate` metotlarıyla konum için
-yarışmaz. Ana bileşen açık olmalıdır. Hedef silinmesi ve oyun duraklatılması
-kontrol edilir; otomatik konum ve dönüş işlemleri `Time.timeScale = 0` iken durur.
+`MainCamera` geçerli grup varsa grup merkezini, yoksa normal hedefi seçer. Önce
+normal takibi veya bölge takibini, ardından Look At ya da isteğe bağlı grup
+dönüşünü uygular. Grup kadrajı bu gerçek konum ve dönüşle hesaplanır; View Expansion
+grup boyutunun üzerine eklenir. Konum, dönüş ve son boyut merkezi olarak uygulanır;
+ek bileşenler bağımsız `LateUpdate` metotlarıyla kamera için yarışmaz. Ana bileşen
+açık olmalıdır. Hedef silinmesi ve oyun duraklatılması kontrol edilir; otomatik
+takip ve grup güncellemeleri `Time.timeScale = 0` iken durur.
 
 Look At ile bölgeler aynı anda açıksa bölgeler konum hareketini, Look At ise
 dönüşü yönetir. Aynı hedefe bakılıyorsa hedef dönüşle merkezde tutulabilir ve
@@ -232,6 +297,7 @@ Kamera nesnesini seçip `MainCamera` bileşenindeki `Add Feature` düğmesine ba
 - `View Expansion`: görüş genişletme bileşenini ekler.
 - `Look At Target`: bakış hedefine dönme bileşenini ekler.
 - `Dead Zone & Soft Zone`: takip bölgeleri bileşenini ekler.
+- `Target Group Camera`: çoklu hedef takibi ve otomatik kadraj bileşenini ekler.
 
 Eklenen özelliklerin ayarları MainCamera Inspector'ının altında açılır panellerde
 gösterilir. `Enabled` ile açılıp kapatılır, `Remove` ile silinir.
@@ -248,10 +314,13 @@ menü ve panel listesine ilgili bileşen eklenir.
 
 ## Doğrulama
 
-Dört kamera dosyası hem `UNITY_EDITOR` açıkken hem kapalıyken Unity referanslarıyla
-derlenir. Geçici kontrol programı, bölge hesaplarının iç alanda hareketsiz kalmasını,
+Beş kamera dosyası hem `UNITY_EDITOR` açıkken hem kapalıyken Unity referanslarıyla
+derlenerek kontrol edilir. Geçici kontrol programı, bölge hesaplarının iç alanda hareketsiz kalmasını,
 simetriyi, hedefi aşmamayı, dış sınırı korumayı, duraklatmayı, sıfır yumuşatmayı,
 eşit bölge sınırlarını ve dönmüş kamerada Z sabit konum dönüşümünü kontrol eder.
+Grup kadrajında farklı ekran oranları, gerçek takip konumu/dönüşü, boş ve silinmiş
+hedefler, Renderer sınırları, hızlı uzaklaşma, yumuşak yakınlaşma, özelliklerin
+birlikte çalışması ve boyutun geri yüklenmesi ayrıca doğrulanır.
 Unity Scene / Play Mode üzerinde görsel kontrol ayrıca yapılmalıdır.
 
 ## Unity içinde kabul kontrolü
@@ -270,12 +339,20 @@ Unity Scene / Play Mode üzerinde görsel kontrol ayrıca yapılmalıdır.
 - Play sırasında yeşil çerçeve kameranın gerçek görüş alanıyla eşleşmeli.
 - `Show Scene Preview` kapalıyken çizimler kaybolmalı.
 - Look At hedefi hareket ettiğinde kamera yumuşak dönmeli; `Rotation Damping = 0` anında dönmeli.
-- Özel bakış hedefi atanmamışken MainCamera takip hedefi kullanılmalı.
+- Özel bakış hedefi atanmamışken geçerli grup merkezi, grup yoksa MainCamera takip hedefi kullanılmalı.
 - Dead Zone içindeyken konum sabit kalmalı; Soft Zone dışına taşmada konum düzeltilmeli.
 - Bölgeler kapatılınca normal takip, Look At kapatılınca seçilen dönüş geri yükleme davranışı çalışmalı.
 - Görüş genişletmesi ve dönen kamera ile Scene çizimleri kadrajla hizalı kalmalı.
-- MainCamera üzerindeki `Add Feature` menüsü üç özelliği ekleyebilmeli; tekrarını engellemeli.
+- MainCamera üzerindeki `Add Feature` menüsü dört özelliği ekleyebilmeli; tekrarını engellemeli.
 - Özellik panelleri aynı bileşenin ayarlarını değiştirmeli; açma/kapama ve kaldırma çalışmalı.
 - Ekleme, kaldırma ve ayar değişiklikleri Ctrl+Z ile geri alınabilmeli.
 - MainCamera Background Color değiştiğinde Camera rengi ve düz renk modu güncellenmeli.
 - Renk değişikliği Ctrl+Z ile geri alınmalı ve sahne/prefab kaydında korunmalı.
+- Gruptaki hedefler farklı yönlere giderken tamamı yatay/dikey ekran oranlarında kadrajda kalmalı.
+- Grup merkezini takip ederken Smooth Time ve Dead Zone/Soft Zone çalışmalı; Z sabit kalmalı.
+- Renderer sınırları açıkken nesnelerin görünür boyutu, kapalıyken hedef konumları kapsanmalı.
+- Kamera hızla uzaklaşan gruba hemen alan açmalı; grup daralınca Zoom Damping ile yakınlaşmalı.
+- Boş, silinmiş ve etkin olmayan grup üyeleri hata oluşturmamalı; boş grup normal takibe ve temel boyuta dönmeli.
+- Rotate To Group gruba dönmeli; etkin Look At dönüşte önceliğini korumalı.
+- Grup kadrajı ve View Expansion birlikte çalışmalı; açma/kapamada boyut birikmemeli.
+- Scene üzerinde grup sınırları/üyeleri görünmeli ve Show Scene Preview ile kapanmalı.

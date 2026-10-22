@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 [RequireComponent(typeof(Camera))]
@@ -22,6 +23,10 @@ public class MainCamera : MonoBehaviour
 
     // Ek kamera davranışlarının takip kadrajına eklediği dünya birimi kayması.
     private Vector2 viewOffset;
+
+    // Boyutu etkileyen özellikler aynı başlangıç değerini paylaşır.
+    private readonly HashSet<MonoBehaviour> sizeOwners = new HashSet<MonoBehaviour>();
+    private float unmodifiedOrthographicSize;
 
     /// <summary>Şu anda takip edilen hedef; hedef atanmamışsa null döner.</summary>
     public Transform Target => target;
@@ -67,6 +72,13 @@ public class MainCamera : MonoBehaviour
 
     private void LateUpdate()
     {
+        bool hasGroup = TryGetTargetGroup(out CameraTargetGroup2D group, out Bounds groupBounds);
+        if (!hasGroup && group != null)
+        {
+            group.StopFraming();
+        }
+        ApplyViewExpansion(hasGroup ? group.CurrentSize : (float?)null);
+
         // Duraklatmada SmoothDamp'e sıfır zaman adımı gönderme.
         if (Time.deltaTime <= 0f)
         {
@@ -74,39 +86,38 @@ public class MainCamera : MonoBehaviour
         }
 
         // Konumu tek noktadan uygula; bölge davranışı normal takibin yerini alır.
-        if (target == null)
+        bool hasFollowTarget = hasGroup || target != null;
+        Vector3 followPosition = hasGroup ? groupBounds.center : target != null ? target.position : transform.position;
+        if (!hasFollowTarget)
         {
             followVelocity = Vector3.zero;
         }
         else if (TryGetComponent(out CameraDeadSoftZone2D zones) && zones.isActiveAndEnabled)
         {
             followVelocity = Vector3.zero;
-            Vector3 framingPosition = target.position + (Vector3)(offset + viewOffset);
+            Vector3 framingPosition = followPosition + (Vector3)(offset + viewOffset);
             transform.position = zones.CalculatePosition(framingPosition, Time.deltaTime);
         }
         else if (smoothTime <= 0f)
         {
-            SnapToTarget();
+            followVelocity = Vector3.zero;
+            transform.position = GetTargetPosition(followPosition);
         }
         else
         {
             transform.position = Vector3.SmoothDamp(
                 transform.position,
-                GetTargetPosition(),
+                GetTargetPosition(followPosition),
                 ref followVelocity,
                 smoothTime,
                 Mathf.Infinity,
                 Time.deltaTime);
         }
 
-        // Konum tamamlandıktan sonra bağımsız bakış hedefine dön.
-        if (TryGetComponent(out CameraLookAtTarget2D lookAt) && lookAt.isActiveAndEnabled)
-        {
-            lookAt.ApplyRotation(Time.deltaTime);
-        }
+        CompleteFraming(hasGroup ? group : null, groupBounds, Time.deltaTime, false);
     }
 
-    /// <summary>Hedefi değiştirir. null verilirse takip durur.</summary>
+    /// <summary>Tek takip hedefini değiştirir. Geçerli bir hedef grubu varken grup önceliklidir.</summary>
     public void SetTarget(Transform newTarget, bool snapImmediately = false)
     {
         target = newTarget;
@@ -123,9 +134,89 @@ public class MainCamera : MonoBehaviour
     {
         followVelocity = Vector3.zero;
 
-        if (target != null)
+        if (TryGetTargetGroup(out CameraTargetGroup2D group, out Bounds groupBounds))
         {
-            transform.position = GetTargetPosition();
+            ApplyViewExpansion(group.CurrentSize);
+            transform.position = GetTargetPosition(groupBounds.center);
+            CompleteFraming(group, groupBounds, 0f, true);
+        }
+        else
+        {
+            if (group != null)
+            {
+                group.StopFraming();
+            }
+            ApplyViewExpansion(null);
+            if (target != null)
+            {
+                transform.position = GetTargetPosition(target.position);
+            }
+        }
+    }
+
+    private bool TryGetTargetGroup(out CameraTargetGroup2D group, out Bounds groupBounds)
+    {
+        groupBounds = default;
+        return TryGetComponent(out group) && group.isActiveAndEnabled && group.TryGetGroupBounds(out groupBounds);
+    }
+
+    private void CompleteFraming(CameraTargetGroup2D group, Bounds groupBounds, float deltaTime, bool snapImmediately)
+    {
+        // Bakış bileşeni açıksa dönüşü o yönetir; özel hedef boşken grup merkezine bakar.
+        if (TryGetComponent(out CameraLookAtTarget2D lookAt) && lookAt.isActiveAndEnabled)
+        {
+            lookAt.ApplyRotation(deltaTime, snapImmediately, group != null ? groupBounds.center : (Vector3?)null);
+        }
+        else if (group != null)
+        {
+            transform.rotation = group.CalculateRotation(groupBounds.center, deltaTime, snapImmediately);
+        }
+
+        // Dönüşten sonra ekranın sağ/sol kaymasını yenile, sonra gerçek konuma göre grubu sığdır.
+        ApplyViewExpansion(group != null ? group.CurrentSize : (float?)null);
+        if (group != null)
+        {
+            ApplyViewExpansion(group.UpdateSize(groupBounds, deltaTime, snapImmediately));
+        }
+    }
+
+    private void ApplyViewExpansion(float? groupSize)
+    {
+        if (TryGetComponent(out CameraViewExpansion2D expansion) && expansion.isActiveAndEnabled)
+        {
+            expansion.ApplyExpansion(groupSize);
+        }
+        else if (groupSize.HasValue)
+        {
+            GetComponent<Camera>().orthographicSize = groupSize.Value;
+        }
+    }
+
+    internal float AcquireSizeControl(MonoBehaviour owner)
+    {
+        if (sizeOwners.Count == 0)
+        {
+            unmodifiedOrthographicSize = GetComponent<Camera>().orthographicSize;
+        }
+        sizeOwners.Add(owner);
+        return unmodifiedOrthographicSize;
+    }
+
+    internal void ReleaseSizeControl(MonoBehaviour owner)
+    {
+        if (!sizeOwners.Remove(owner))
+        {
+            return;
+        }
+
+        if (sizeOwners.Count == 0)
+        {
+            GetComponent<Camera>().orthographicSize = unmodifiedOrthographicSize;
+        }
+        else
+        {
+            bool hasGroup = TryGetTargetGroup(out CameraTargetGroup2D group, out _);
+            ApplyViewExpansion(hasGroup ? group.CurrentSize : (float?)null);
         }
     }
 
@@ -158,10 +249,8 @@ public class MainCamera : MonoBehaviour
             (right.x * planeOffset.y - planeOffset.x * up.x) / determinant);
     }
 
-    private Vector3 GetTargetPosition()
+    private Vector3 GetTargetPosition(Vector3 targetPosition)
     {
-        Vector3 targetPosition = target.position;
-
         // Hedefin Z konumundan bağımsız olarak kameranın derinliğini koru.
         return new Vector3(
             targetPosition.x + offset.x + viewOffset.x,

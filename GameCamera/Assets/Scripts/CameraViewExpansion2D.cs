@@ -25,6 +25,8 @@ public class CameraViewExpansion2D : MonoBehaviour
     private Camera controlledCamera;
     private MainCamera cameraController;
     private float baseOrthographicSize;
+    private float appliedBaseOrthographicSize;
+    private float? groupBaseOrthographicSize;
     private Vector2 appliedViewOffset;
 
     private void Awake()
@@ -36,14 +38,10 @@ public class CameraViewExpansion2D : MonoBehaviour
     private void OnEnable()
     {
         // Her etkinleştirmede mevcut boyutu temel al; kareler arasında biriktirme.
-        baseOrthographicSize = controlledCamera.orthographicSize;
-        ApplyExpansion();
-    }
-
-    private void Update()
-    {
-        // Inspector değişikliklerini ve ekran oranındaki değişimleri takip et.
-        ApplyExpansion();
+        baseOrthographicSize = cameraController.AcquireSizeControl(this);
+        bool hasGroup = TryGetComponent(out CameraTargetGroup2D group) && group.isActiveAndEnabled &&
+            group.TryGetGroupBounds(out _);
+        ApplyExpansion(hasGroup ? group.CurrentSize : (float?)null);
     }
 
     private void OnDisable()
@@ -51,7 +49,7 @@ public class CameraViewExpansion2D : MonoBehaviour
         // Bileşen kapatıldığında kendi boyut ve kadraj değişikliğini geri al.
         if (controlledCamera != null)
         {
-            controlledCamera.orthographicSize = baseOrthographicSize;
+            controlledCamera.orthographicSize = groupBaseOrthographicSize ?? baseOrthographicSize;
         }
 
         if (cameraController != null)
@@ -60,6 +58,11 @@ public class CameraViewExpansion2D : MonoBehaviour
         }
 
         appliedViewOffset = Vector2.zero;
+        groupBaseOrthographicSize = null;
+        if (cameraController != null)
+        {
+            cameraController.ReleaseSizeControl(this);
+        }
     }
 
     /// <summary>
@@ -74,14 +77,17 @@ public class CameraViewExpansion2D : MonoBehaviour
 
         if (isActiveAndEnabled)
         {
-            ApplyExpansion();
+            ApplyExpansion(groupBaseOrthographicSize);
         }
     }
 
-    private void ApplyExpansion()
+    // Boyut değişikliklerini MainCamera sıralar; grup zoom'u ile iki bağımsız yazıcı oluşmaz.
+    internal void ApplyExpansion(float? groupSize)
     {
+        groupBaseOrthographicSize = groupSize;
+        appliedBaseOrthographicSize = groupSize ?? baseOrthographicSize;
         GetExpansion(controlledCamera.aspect, out float sizeIncrease, out Vector2 centerOffset);
-        controlledCamera.orthographicSize = baseOrthographicSize + sizeIncrease;
+        controlledCamera.orthographicSize = appliedBaseOrthographicSize + sizeIncrease;
         // Kamera döndüğünde de sağ/sol, ekranın sağ/sol yönünü ifade eder.
         appliedViewOffset = MainCamera.CameraPlaneToWorldOffset(transform.rotation, centerOffset);
         cameraController.SetViewOffset(appliedViewOffset);
@@ -107,7 +113,7 @@ public class CameraViewExpansion2D : MonoBehaviour
     {
         Camera previewCamera = GetComponent<Camera>();
         bool expansionApplied = Application.isPlaying && controlledCamera != null;
-        baseSize = expansionApplied ? baseOrthographicSize : previewCamera.orthographicSize;
+        baseSize = expansionApplied ? appliedBaseOrthographicSize : previewCamera.orthographicSize;
         baseCenter = transform.position;
         if (expansionApplied)
         {
