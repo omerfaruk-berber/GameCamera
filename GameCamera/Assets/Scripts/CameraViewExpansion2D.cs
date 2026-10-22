@@ -4,22 +4,23 @@ using UnityEngine;
 /// Görüş alanını sola, sağa veya her yöne genişletir; görüntü oranını korur.
 /// Konum değişikliklerini MainCamera üzerinden uygular.
 /// </summary>
+[AddComponentMenu("")]
 [RequireComponent(typeof(Camera), typeof(MainCamera))]
 [DisallowMultipleComponent]
 public class CameraViewExpansion2D : MonoBehaviour
 {
     [Header("View Expansion")]
-    [SerializeField, Min(0f), Tooltip("Sol kenara eklenecek görüş mesafesi (dünya birimi).")]
+    [SerializeField, Min(0f), Tooltip("Extra view distance added to the left edge in world units.")]
     private float leftExpansion;
 
-    [SerializeField, Min(0f), Tooltip("Sağ kenara eklenecek görüş mesafesi (dünya birimi).")]
+    [SerializeField, Min(0f), Tooltip("Extra view distance added to the right edge in world units.")]
     private float rightExpansion;
 
-    [SerializeField, Min(0f), Tooltip("Üst ve alta eklenecek mesafe. Sağ ve sol, görüntü oranına göre genişler.")]
+    [SerializeField, Min(0f), Tooltip("Distance added to the top and bottom. Horizontal expansion follows the aspect ratio.")]
     private float allSidesExpansion;
 
     [Header("Scene Preview")]
-    [SerializeField, Tooltip("Scene görünümünde başlangıç ve genişletilmiş kadrajı gösterir. Gizmos açık olmalıdır.")]
+    [SerializeField, Tooltip("Shows the base and expanded framing in the Scene view when Gizmos are enabled.")]
     private bool showScenePreview = true;
 
     private Camera controlledCamera;
@@ -37,6 +38,15 @@ public class CameraViewExpansion2D : MonoBehaviour
 
     private void OnEnable()
     {
+        if (controlledCamera == null)
+        {
+            controlledCamera = GetComponent<Camera>();
+        }
+        if (cameraController == null)
+        {
+            cameraController = GetComponent<MainCamera>();
+        }
+
         // Her etkinleştirmede mevcut boyutu temel al; kareler arasında biriktirme.
         baseOrthographicSize = cameraController.AcquireSizeControl(this);
         bool hasGroup = TryGetComponent(out CameraTargetGroup2D group) && group.isActiveAndEnabled &&
@@ -84,6 +94,25 @@ public class CameraViewExpansion2D : MonoBehaviour
     // Boyut değişikliklerini MainCamera sıralar; grup zoom'u ile iki bağımsız yazıcı oluşmaz.
     internal void ApplyExpansion(float? groupSize)
     {
+        if (controlledCamera == null)
+        {
+            controlledCamera = GetComponent<Camera>();
+        }
+        if (cameraController == null)
+        {
+            cameraController = GetComponent<MainCamera>();
+        }
+
+        if (!cameraController.Is2D)
+        {
+            groupBaseOrthographicSize = null;
+            controlledCamera.orthographicSize = baseOrthographicSize;
+            appliedBaseOrthographicSize = baseOrthographicSize;
+            appliedViewOffset = Vector2.zero;
+            cameraController.SetViewOffset(Vector2.zero);
+            return;
+        }
+
         groupBaseOrthographicSize = groupSize;
         appliedBaseOrthographicSize = groupSize ?? baseOrthographicSize;
         GetExpansion(controlledCamera.aspect, out float sizeIncrease, out Vector2 centerOffset);
@@ -130,7 +159,8 @@ public class CameraViewExpansion2D : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (!showScenePreview || !isActiveAndEnabled)
+        if (!showScenePreview || !isActiveAndEnabled ||
+            !TryGetComponent(out MainCamera mainCamera) || !mainCamera.Is2D)
         {
             return;
         }

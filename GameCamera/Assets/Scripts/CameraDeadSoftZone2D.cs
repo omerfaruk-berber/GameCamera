@@ -1,21 +1,22 @@
 using UnityEngine;
 
 /// <summary>İç bölgede konumu sabit tutar; dış sınıra yaklaştıkça takibi hızlandırır.</summary>
+[AddComponentMenu("")]
 [RequireComponent(typeof(Camera), typeof(MainCamera))]
 [DisallowMultipleComponent]
 public class CameraDeadSoftZone2D : MonoBehaviour
 {
     [Header("Zone Settings")]
-    [SerializeField, Tooltip("Kadraj genişliği/yüksekliğine oranla hareketsiz alan. 0.2 = yüzde 20.")]
+    [SerializeField, Tooltip("Stationary area relative to the frame width and height. 0.2 means 20 percent.")]
     private Vector2 deadZoneSize = new Vector2(0.2f, 0.2f);
 
-    [SerializeField, Tooltip("Yumuşak takip alanının dış sınırı. Dead Zone'dan küçük olamaz.")]
+    [SerializeField, Tooltip("Outer boundary of the smooth follow area. It cannot be smaller than the Dead Zone.")]
     private Vector2 softZoneSize = new Vector2(0.8f, 0.8f);
 
-    [SerializeField, Min(0f), Tooltip("Dead Zone yakınındaki takip yumuşama süresi. Dış sınıra doğru tepki hızlanır.")]
+    [SerializeField, Min(0f), Tooltip("Follow smoothing time near the Dead Zone. Response becomes faster near the outer boundary.")]
     private float damping = 0.35f;
 
-    [SerializeField, Tooltip("Scene üzerinde Dead Zone ve Soft Zone sınırlarını gösterir.")]
+    [SerializeField, Tooltip("Shows the Dead Zone and Soft Zone boundaries in the Scene view.")]
     private bool showScenePreview = true;
 
     private void OnValidate()
@@ -77,7 +78,8 @@ public class CameraDeadSoftZone2D : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (!showScenePreview || !isActiveAndEnabled)
+        if (!showScenePreview || !isActiveAndEnabled ||
+            !TryGetComponent(out MainCamera mainCamera) || !mainCamera.Is2D)
         {
             return;
         }

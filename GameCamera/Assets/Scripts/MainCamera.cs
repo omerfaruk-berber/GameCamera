@@ -6,17 +6,24 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class MainCamera : MonoBehaviour
 {
+    [Header("Camera Settings")]
+    [SerializeField, Tooltip("Selects 2D orthographic or 3D perspective behavior.")]
+    private GameCameraMode cameraMode = GameCameraMode.Mode2D;
+
     [Header("Follow Settings")]
-    [SerializeField, Tooltip("X/Y düzleminde takip edilecek nesne.")]
+    [SerializeField, Tooltip("The object followed by the camera.")]
     private Transform target;
 
-    [SerializeField, Tooltip("Hedefe göre dünya koordinatlarında X/Y kadraj kayması.")]
+    [SerializeField, Tooltip("World-space X/Y framing offset used in 2D mode.")]
     private Vector2 offset = Vector2.zero;
 
-    [SerializeField, Min(0f), Tooltip("Takibin yaklaşık yumuşama süresi (saniye). 0 anında takip eder.")]
+    [SerializeField, Tooltip("World-space X/Y/Z offset from the target used in 3D mode.")]
+    private Vector3 offset3D = new Vector3(0f, 2f, -10f);
+
+    [SerializeField, Min(0f), Tooltip("Approximate follow smoothing time in seconds. Set to 0 for immediate movement.")]
     private float smoothTime = 0.2f;
 
-    [SerializeField, Tooltip("Oyun başlarken kamerayı doğrudan hedefe yerleştirir.")]
+    [SerializeField, Tooltip("Moves the camera directly to the target when play begins.")]
     private bool snapOnStart = true;
 
     // SmoothDamp kareler arasındaki takip hızını bu alanda saklar.
@@ -31,6 +38,12 @@ public class MainCamera : MonoBehaviour
 
     /// <summary>Şu anda takip edilen hedef; hedef atanmamışsa null döner.</summary>
     public Transform Target => target;
+
+    /// <summary>The active 2D or 3D behavior mode.</summary>
+    public GameCameraMode CameraMode => cameraMode;
+
+    /// <summary>Returns true while the controller uses orthographic 2D behavior.</summary>
+    public bool Is2D => cameraMode == GameCameraMode.Mode2D;
 
     /// <summary>
     /// Unity Camera bileşeninin arka plan rengini yönetir.
@@ -49,13 +62,19 @@ public class MainCamera : MonoBehaviour
 
     private void Reset()
     {
-        // Bileşen editörde ilk eklendiğinde 2B görünümü hazırla.
-        GetComponent<Camera>().orthographic = true;
+        cameraMode = GameCameraMode.Mode2D;
+        ApplyCameraMode();
     }
 
     private void Awake()
     {
-        GetComponent<Camera>().orthographic = true;
+        ApplyCameraMode();
+    }
+
+    private void OnValidate()
+    {
+        followVelocity = Vector3.zero;
+        ApplyCameraMode();
     }
 
     private void OnEnable()
@@ -73,6 +92,7 @@ public class MainCamera : MonoBehaviour
 
     private void LateUpdate()
     {
+        CameraPixelMove2D pixelMove = BeginPixelMove();
         bool hasGroup = TryGetTargetGroup(out CameraTargetGroup2D group, out Bounds groupBounds);
         if (!hasGroup && group != null)
         {
@@ -83,6 +103,10 @@ public class MainCamera : MonoBehaviour
         // Duraklatmada SmoothDamp'e sıfır zaman adımı gönderme.
         if (Time.deltaTime <= 0f)
         {
+            if (pixelMove != null)
+            {
+                transform.position = pixelMove.CalculatePosition(transform.position);
+            }
             return;
         }
 
@@ -93,7 +117,7 @@ public class MainCamera : MonoBehaviour
         {
             followVelocity = Vector3.zero;
         }
-        else if (TryGetComponent(out CameraDeadSoftZone2D zones) && zones.isActiveAndEnabled)
+        else if (Is2D && TryGetComponent(out CameraDeadSoftZone2D zones) && zones.isActiveAndEnabled)
         {
             followVelocity = Vector3.zero;
             Vector3 framingPosition = followPosition + (Vector3)(offset + viewOffset);
@@ -115,7 +139,7 @@ public class MainCamera : MonoBehaviour
                 Time.deltaTime);
         }
 
-        CompleteFraming(hasGroup ? group : null, groupBounds, Time.deltaTime, false);
+        CompleteFraming(hasGroup ? group : null, groupBounds, Time.deltaTime, false, pixelMove);
     }
 
     /// <summary>Tek takip hedefini değiştirir. Geçerli bir hedef grubu varken grup önceliklidir.</summary>
@@ -130,16 +154,26 @@ public class MainCamera : MonoBehaviour
         }
     }
 
+    /// <summary>Changes the camera between orthographic 2D and perspective 3D behavior.</summary>
+    public void SetCameraMode(GameCameraMode newMode)
+    {
+        cameraMode = newMode;
+        followVelocity = Vector3.zero;
+        ApplyCameraMode();
+        SnapToTarget();
+    }
+
     /// <summary>Yumuşatma uygulamadan mevcut hedefe ve kadraj kaymasına yerleşir.</summary>
     public void SnapToTarget()
     {
         followVelocity = Vector3.zero;
+        CameraPixelMove2D pixelMove = BeginPixelMove();
 
         if (TryGetTargetGroup(out CameraTargetGroup2D group, out Bounds groupBounds))
         {
             ApplyViewExpansion(group.CurrentSize);
             transform.position = GetTargetPosition(groupBounds.center);
-            CompleteFraming(group, groupBounds, 0f, true);
+            CompleteFraming(group, groupBounds, 0f, true, pixelMove);
         }
         else
         {
@@ -152,19 +186,39 @@ public class MainCamera : MonoBehaviour
             {
                 transform.position = GetTargetPosition(target.position);
             }
+            if (pixelMove != null)
+            {
+                transform.position = pixelMove.CalculatePosition(transform.position);
+            }
         }
+    }
+
+    private CameraPixelMove2D BeginPixelMove()
+    {
+        if (Is2D && TryGetComponent(out CameraPixelMove2D pixelMove) && pixelMove.isActiveAndEnabled)
+        {
+            transform.position = pixelMove.RestorePosition(transform.position);
+            return pixelMove;
+        }
+        return null;
     }
 
     private bool TryGetTargetGroup(out CameraTargetGroup2D group, out Bounds groupBounds)
     {
         groupBounds = default;
-        return TryGetComponent(out group) && group.isActiveAndEnabled && group.TryGetGroupBounds(out groupBounds);
+        if (!TryGetComponent(out group))
+        {
+            return false;
+        }
+
+        return Is2D && group.isActiveAndEnabled && group.TryGetGroupBounds(out groupBounds);
     }
 
-    private void CompleteFraming(CameraTargetGroup2D group, Bounds groupBounds, float deltaTime, bool snapImmediately)
+    private void CompleteFraming(CameraTargetGroup2D group, Bounds groupBounds, float deltaTime,
+        bool snapImmediately, CameraPixelMove2D pixelMove)
     {
         // Bakış bileşeni açıksa dönüşü o yönetir; özel hedef boşken grup merkezine bakar.
-        if (TryGetComponent(out CameraLookAtTarget2D lookAt) && lookAt.isActiveAndEnabled)
+        if (!Is2D && TryGetComponent(out CameraLookAtTarget2D lookAt) && lookAt.isActiveAndEnabled)
         {
             lookAt.ApplyRotation(deltaTime, snapImmediately, group != null ? groupBounds.center : (Vector3?)null);
         }
@@ -175,6 +229,10 @@ public class MainCamera : MonoBehaviour
 
         // Dönüşten sonra ekranın sağ/sol kaymasını yenile, sonra gerçek konuma göre grubu sığdır.
         ApplyViewExpansion(group != null ? group.CurrentSize : (float?)null);
+        if (pixelMove != null)
+        {
+            transform.position = pixelMove.CalculatePosition(transform.position);
+        }
         if (group != null)
         {
             ApplyViewExpansion(group.UpdateSize(groupBounds, deltaTime, snapImmediately));
@@ -185,9 +243,9 @@ public class MainCamera : MonoBehaviour
     {
         if (TryGetComponent(out CameraViewExpansion2D expansion) && expansion.isActiveAndEnabled)
         {
-            expansion.ApplyExpansion(groupSize);
+            expansion.ApplyExpansion(Is2D ? groupSize : null);
         }
-        else if (groupSize.HasValue)
+        else if (Is2D && groupSize.HasValue)
         {
             GetComponent<Camera>().orthographicSize = groupSize.Value;
         }
@@ -252,10 +310,30 @@ public class MainCamera : MonoBehaviour
 
     private Vector3 GetTargetPosition(Vector3 targetPosition)
     {
+        if (!Is2D)
+        {
+            return targetPosition + offset3D;
+        }
+
         // Hedefin Z konumundan bağımsız olarak kameranın derinliğini koru.
         return new Vector3(
             targetPosition.x + offset.x + viewOffset.x,
             targetPosition.y + offset.y + viewOffset.y,
             transform.position.z);
+    }
+
+    private void ApplyCameraMode()
+    {
+        Camera attachedCamera = GetComponent<Camera>();
+        if (attachedCamera == null)
+        {
+            return;
+        }
+
+        attachedCamera.orthographic = Is2D;
+        if (!Is2D && viewOffset != Vector2.zero)
+        {
+            SetViewOffset(Vector2.zero);
+        }
     }
 }

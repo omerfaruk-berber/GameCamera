@@ -1,24 +1,25 @@
-# 2B Kamera Yol Haritası
+# Main Camera Yol Haritası
 
 ## Amaç
 
 Önce sade ve kullanılabilir bir kamera gövdesi oluşturmak, sonra farklı oyun
 türlerinin ihtiyaçlarını ayrı C# dosyalarıyla eklemek. Kod, alan ve metot adları
-İngilizce; açıklamalar ve kullanım rehberi Türkçe olacak.
+İngilizce olacak; kullanım rehberi Türkçe kalacak.
 
 ## 1. Aşama — Ana gövde (bu sürüm)
 
 - Mevcut `Assets/Scripts/MainCamera.cs` dosyasını temel kamera bileşeni yapmak.
-- Kamerayı ortografik (perspektifsiz 2B görünüm) kullanmak.
-- Bir `Transform` hedefini X/Y düzleminde `LateUpdate` içinde takip etmek.
-- `offset` ile hedefe göre kadrajı, `smoothTime` ile takip yumuşaklığını ayarlamak.
-- Kameranın mevcut dünya Z konumunu korumak; hedefin Z hareketini izlememek.
+- `Camera Mode` ile 2D ortografik veya 3D perspektif görünümü seçmek.
+- Bir `Transform` hedefini `LateUpdate` içinde takip etmek.
+- 2D modunda X/Y offset kullanıp kamera Z konumunu korumak.
+- 3D modunda X/Y/Z offset kullanarak hedefi üç eksende takip etmek.
 - Başlangıçta isteğe bağlı olarak hedefe anında yerleşmek.
 - Geçerli bir grup veya tek hedef yoksa kamerayı bulunduğu yerde tutmak.
 - Başka kodların `SetTarget` ve `SnapToTarget` ile kamerayı yönlendirebilmesi.
 
-Bu gövde standart XY düzlemindeki 2B kamera içindir. Varsayılan dönüş `(0, 0, 0)`;
-isteğe bağlı `CameraLookAtTarget2D` bileşeni kamerayı hedefe doğru döndürebilir.
+Gövde varsayılan olarak standart XY düzlemindeki 2D modunda başlar. 3D seçildiğinde
+Unity Camera perspektif moda geçer ve hedefin üç eksendeki hareketi izlenir.
+İsteğe bağlı `CameraLookAtTarget2D` bileşeni yalnızca 3D modunda hedefe dönebilir.
 Takip hedefi kameradan bağımsız olmalı; kamera hedefin alt nesnesi yapılmamalı.
 
 ## 2. Aşama — Oyun türüne göre takip (sonra)
@@ -44,16 +45,17 @@ Bu aşamada boş altyapı veya ek bağımlılık eklenmeyecek.
 ## Kurulum
 
 1. `Add Component > Camera > Main Camera` yoluyla `MainCamera` bileşenini sahnedeki `Main Camera` nesnesine ekle.
-2. Kameranın dönüşünü `(0, 0, 0)`, Z konumunu örneğin `-10` yap.
-3. Takip edilecek karakteri veya nesneyi `Target` alanına sürükle.
-4. `Offset` ile X/Y kadraj kaymasını ayarla; örneğin `(0, 1)` hedefin üstünü gösterir.
-5. `Smooth Time` için `0.2` ile başla. Daha yüksek değer daha gecikmeli takip,
+2. `Camera Mode` alanından `2D` veya `3D` seç. Bu seçim Unity Camera projeksiyonunu yönetir.
+3. 2D için kameranın dönüşünü `(0, 0, 0)`, Z konumunu örneğin `-10` yap.
+4. Takip edilecek karakteri veya nesneyi `Target` alanına sürükle.
+5. `Offset` alanı 2D modunda X/Y, 3D modunda X/Y/Z kadraj mesafesini ayarlar.
+6. `Smooth Time` için `0.2` ile başla. Daha yüksek değer daha gecikmeli takip,
    `0` ise anında takip sağlar. Süre saniye cinsinden yaklaşık tepki süresidir.
-6. `Snap On Start` açıksa kamera oyun başlarken doğrudan hedefe yerleşir.
-7. Görüş alanını Camera bileşenindeki `Size` üzerinden ayarla.
-8. Arka plan rengini MainCamera üzerindeki `Background Settings > Background Color` alanından ayarla.
+7. `Snap On Start` açıksa kamera oyun başlarken doğrudan hedefe yerleşir.
+8. 2D görüşü `Size`, 3D görüşü `Field of View` üzerinden ayarla.
+9. Arka plan rengini MainCamera üzerindeki `Background Settings > Background Color` alanından ayarla.
 
-Kamera Play sırasında ortografik moda geçer. Hedef `Rigidbody2D` ile hareket
+Kamera Play sırasında seçilen moda geçer. Hedef `Rigidbody2D` ile hareket
 ediyorsa ve fizik adımları görünür titreme oluşturuyorsa hedefin `Interpolation`
 ayarını `Interpolate` olarak deneyebilirsin. Kamera oyun zamanını kullanır;
 `Time.timeScale = 0` olduğunda otomatik takip durur.
@@ -75,10 +77,19 @@ cameraController.SetTarget(null);
 
 // Kamera arka planını siyah yap; düz renk arka plan modunu etkinleştir.
 cameraController.BackgroundColor = Color.black;
+
+// Perspektif 3D takibe geç.
+cameraController.SetCameraMode(GameCameraMode.Mode3D);
 ```
 
 Burada `cameraController`, Inspector üzerinden bağlanan bir `MainCamera`
 referansıdır. `Target` özelliği mevcut hedefi dışarıdan okumak için kullanılabilir.
+
+View Expansion, Dead Zone & Soft Zone, Target Group ve Pixel Move ortografik hesap kullandığı
+için yalnız 2D modunda çalışır. 3D modunda Add Feature menüsünde `2D Only` olarak
+gösterilir; önceden eklenmişlerse ayarları korunur fakat davranışları uygulanmaz.
+Look At Target yalnızca 3D modunda kullanılabilir. 2D modunda Add Feature menüsünde
+`3D Only` olarak gösterilir; önceden eklenmişse ayarları korunur fakat davranışı uygulanmaz.
 
 ## Arka plan rengi (eklendi)
 
@@ -170,6 +181,9 @@ değiştirmez. Önizleme, Camera'nın görüntü oranını kullanır.
 ## Look At Target (eklendi)
 
 `CameraLookAtTarget2D.cs` bileşenini aynı kamera nesnesine ekle:
+
+Bu özellik yalnızca 3D modunda çalışır. 2D modunda mevcut dönüşü değiştirmez ve
+Scene hedef önizlemesini çizmez.
 
 - `Look At Target`: kameranın bakacağı hedef. Boşsa geçerli hedef grubunun merkezi,
   grup yoksa `MainCamera.Target` kullanılır.
@@ -276,7 +290,8 @@ sınırlarını ve geçerli üyeleri gösterir; `Show Scene Preview` ile kapatı
 
 `MainCamera` geçerli grup varsa grup merkezini, yoksa normal hedefi seçer. Önce
 normal takibi veya bölge takibini, ardından Look At ya da isteğe bağlı grup
-dönüşünü uygular. Grup kadrajı bu gerçek konum ve dönüşle hesaplanır; View Expansion
+dönüşünü uygular. Pixel Move açıksa takip ve görüş kaymasından sonraki X/Y konumu
+piksel ızgarasına yuvarlanır. Grup kadrajı bu gerçek konum ve dönüşle hesaplanır; View Expansion
 grup boyutunun üzerine eklenir. Konum, dönüş ve son boyut merkezi olarak uygulanır;
 ek bileşenler bağımsız `LateUpdate` metotlarıyla kamera için yarışmaz. Ana bileşen
 açık olmalıdır. Hedef silinmesi ve oyun duraklatılması kontrol edilir; otomatik
@@ -290,6 +305,31 @@ Sabit bir 2B kadrajda Dead Zone davranışını görmek için Look At'ı kapalı
 Kamera oyun düzlemine neredeyse paralel bakarsa Z sabit tutularak kadraj kayması
 hesaplanamaz; bölge ve yönlü genişleme kayması bu özel durumda sıfırlanır.
 
+## Pixel Move (eklendi)
+
+`MainCamera > Add Feature > Pixel Move` ile ayrı `CameraPixelMove2D.cs` bileşenini
+ekle. `Pixels Per Unit` alanını sprite import ayarlarındaki aynı değerle eşleştir.
+Varsayılan değer `16`dır; örneğin `16` için hareket adımı `1 / 16` dünya birimidir.
+Değer en az `1` olabilir ve koddan `pixelMove.PixelsPerUnit = 32` ile değiştirilebilir.
+
+Özellik yalnızca 2D modunda son dünya X/Y konumunu en yakın piksel koordinatına
+yuvarlar; Z konumunu, dönüşü ve Camera `Size` değerini değiştirmez. Hedef yokken de
+kamerayı ızgaraya yerleştirir. Yumuşak takip hesabının hassas konumu ayrıca korunur;
+böylece bir pikselden küçük hareketler kaybolmaz ve kamera hedefe yaklaşırken takılmaz.
+`SnapToTarget` ve anında hedef değiştirme çağrılarında da piksel hizalaması uygulanır.
+Kameranın dışarıdan taşınması veya ışınlanması eski konumla geri alınmaz.
+
+Dead Zone & Soft Zone ve View Expansion sonrasında hizalama uygulanır; grup
+boyutu hizalanmış gerçek konuma göre hesaplanır. Yuvarlama kadraj merkezini her
+eksende en fazla yarım sprite pikseli kaydırabilir. `Enabled` kapatıldığında standart
+takip geri gelir; 3D modunda ayarlar korunur ve özellik uygulanmaz.
+
+Pixel Move yalnızca kamera hareketini hizalar. Tam ekran piksel eşlemesi, çözünürlük
+ölçekleme, sprite filtreleme ve hareketli nesnelerin piksel hizalamasını yönetmez.
+En tutarlı sonuç için standart XY düzleminde, dönüşsüz 2D kamera ve sprite'larda
+`Point` filtreleme kullan. Serbest dönüş veya kesirli zoom altında tam piksel
+görünümü garanti edilmez.
+
 ## MainCamera Inspector üzerinden özellik yönetimi (eklendi)
 
 Kamera nesnesini seçip `MainCamera` bileşenindeki `Add Feature` düğmesine bas:
@@ -298,6 +338,7 @@ Kamera nesnesini seçip `MainCamera` bileşenindeki `Add Feature` düğmesine ba
 - `Look At Target`: bakış hedefine dönme bileşenini ekler.
 - `Dead Zone & Soft Zone`: takip bölgeleri bileşenini ekler.
 - `Target Group Camera`: çoklu hedef takibi ve otomatik kadraj bileşenini ekler.
+- `Pixel Move`: 2D kamera hareketini sprite piksel ızgarasına hizalar.
 
 Eklenen özelliklerin ayarları MainCamera Inspector'ının altında açılır panellerde
 gösterilir. `Enabled` ile açılıp kapatılır, `Remove` ile silinir.
@@ -314,7 +355,7 @@ menü ve panel listesine ilgili bileşen eklenir.
 
 ## Doğrulama
 
-Beş kamera dosyası hem `UNITY_EDITOR` açıkken hem kapalıyken Unity referanslarıyla
+Kamera dosyaları hem `UNITY_EDITOR` açıkken hem kapalıyken Unity referanslarıyla
 derlenerek kontrol edilir. Geçici kontrol programı, bölge hesaplarının iç alanda hareketsiz kalmasını,
 simetriyi, hedefi aşmamayı, dış sınırı korumayı, duraklatmayı, sıfır yumuşatmayı,
 eşit bölge sınırlarını ve dönmüş kamerada Z sabit konum dönüşümünü kontrol eder.
@@ -343,7 +384,7 @@ Unity Scene / Play Mode üzerinde görsel kontrol ayrıca yapılmalıdır.
 - Dead Zone içindeyken konum sabit kalmalı; Soft Zone dışına taşmada konum düzeltilmeli.
 - Bölgeler kapatılınca normal takip, Look At kapatılınca seçilen dönüş geri yükleme davranışı çalışmalı.
 - Görüş genişletmesi ve dönen kamera ile Scene çizimleri kadrajla hizalı kalmalı.
-- MainCamera üzerindeki `Add Feature` menüsü dört özelliği ekleyebilmeli; tekrarını engellemeli.
+- MainCamera üzerindeki `Add Feature` menüsü beş özelliği ekleyebilmeli; tekrarını engellemeli.
 - Özellik panelleri aynı bileşenin ayarlarını değiştirmeli; açma/kapama ve kaldırma çalışmalı.
 - Ekleme, kaldırma ve ayar değişiklikleri Ctrl+Z ile geri alınabilmeli.
 - MainCamera Background Color değiştiğinde Camera rengi ve düz renk modu güncellenmeli.
@@ -356,3 +397,8 @@ Unity Scene / Play Mode üzerinde görsel kontrol ayrıca yapılmalıdır.
 - Rotate To Group gruba dönmeli; etkin Look At dönüşte önceliğini korumalı.
 - Grup kadrajı ve View Expansion birlikte çalışmalı; açma/kapamada boyut birikmemeli.
 - Scene üzerinde grup sınırları/üyeleri görünmeli ve Show Scene Preview ile kapanmalı.
+- Pixel Move açıkken pozitif/negatif X/Y konumları `1 / Pixels Per Unit` ızgarasında olmalı; Z korunmalı.
+- Yavaş ve yumuşak takipte küçük hareketler birikmeli; kamera hedefe ulaşmadan takılmamalı.
+- Hedefsiz kullanım, anında hedef değiştirme, dışarıdan taşıma ve duraklatma konumu bozmamalı.
+- Pixel Move; bölge takibi, görüş genişletme ve grup kadrajıyla birlikte çalışmalı.
+- Pixel Move açma/kapama, kaldırma, Undo/Redo ve 2D/3D geçişleri mevcut özelliklerle aynı biçimde çalışmalı.

@@ -2,34 +2,35 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>Birden fazla hedefi aynı ortografik kadrajda tutacak merkez ve boyutu hesaplar.</summary>
+[AddComponentMenu("")]
 [RequireComponent(typeof(Camera), typeof(MainCamera))]
 [DisallowMultipleComponent]
 public class CameraTargetGroup2D : MonoBehaviour
 {
     [Header("Target Group")]
-    [SerializeField, Tooltip("Aynı kadrajda tutulacak nesneler. Boş, silinmiş ve pasif hedefler atlanır.")]
+    [SerializeField, Tooltip("Objects kept in the same frame. Empty, destroyed, and inactive targets are ignored.")]
     private List<Transform> targets = new List<Transform>();
 
-    [SerializeField, Tooltip("Hedeflerin aktif Renderer sınırlarını da kapsar; Renderer yoksa nesnenin konumu kullanılır.")]
+    [SerializeField, Tooltip("Includes active Renderer bounds. The Transform position is used when no Renderer is available.")]
     private bool includeRendererBounds = true;
 
     [Header("Group Framing")]
-    [SerializeField, Tooltip("Kamera düzleminde hedeflerin çevresindeki yatay/dikey boşluk (dünya birimi).")]
+    [SerializeField, Tooltip("Horizontal and vertical space around the targets in camera-plane world units.")]
     private Vector2 padding = Vector2.one;
 
-    [SerializeField, Min(0.01f), Tooltip("En küçük ortografik Size. Hedefler uzaklaştığında üst sınır olmadan genişler.")]
+    [SerializeField, Min(0.01f), Tooltip("Minimum orthographic Size. The view expands without a maximum when targets move apart.")]
     private float minimumSize = 5f;
 
-    [SerializeField, Min(0f), Tooltip("Hedefler yaklaşırken zoom yumuşama süresi. Uzaklaşmada hedefleri korumak için boyut hemen büyür.")]
+    [SerializeField, Min(0f), Tooltip("Zoom smoothing time when targets move closer. The view expands immediately to keep targets visible.")]
     private float zoomDamping = 0.35f;
 
-    [SerializeField, Tooltip("Look At Target bileşeni dönüşü yönetmiyorsa kamerayı grup merkezine döndürür.")]
+    [SerializeField, Tooltip("Rotates the camera toward the group center when Look At Target is not controlling rotation.")]
     private bool rotateToGroup = false;
 
-    [SerializeField, Min(0f), Tooltip("Grup merkezine dönüşün yumuşama süresi. 0 anında döner.")]
+    [SerializeField, Min(0f), Tooltip("Rotation smoothing time toward the group center. Set to 0 for an immediate rotation.")]
     private float rotationDamping = 0.15f;
 
-    [SerializeField, Tooltip("Scene üzerinde grup sınırlarını, merkezini ve hedef bağlantılarını gösterir.")]
+    [SerializeField, Tooltip("Shows group bounds, center, and target connections in the Scene view.")]
     private bool showScenePreview = true;
 
     private readonly List<Renderer> memberRenderers = new List<Renderer>();
@@ -149,31 +150,6 @@ public class CameraTargetGroup2D : MonoBehaviour
             !member.IsChildOf(transform) && !transform.IsChildOf(member);
     }
 
-    internal Quaternion CalculateRotation(Vector3 groupCenter, float deltaTime, bool snapImmediately)
-    {
-        Vector3 direction = groupCenter - transform.position;
-        if (!rotateToGroup || direction.sqrMagnitude < 0.000001f)
-        {
-            return transform.rotation;
-        }
-
-        direction.Normalize();
-        Vector3 up = Vector3.up;
-        if (Mathf.Abs(Vector3.Dot(direction, up)) > 0.999f)
-        {
-            up = Vector3.ProjectOnPlane(transform.up, direction);
-            if (up.sqrMagnitude < 0.000001f)
-            {
-                up = Vector3.forward;
-            }
-        }
-
-        Quaternion desired = Quaternion.LookRotation(direction, up);
-        float blend = snapImmediately || rotationDamping <= 0f
-            ? 1f : 1f - Mathf.Exp(-deltaTime / rotationDamping);
-        return Quaternion.Slerp(transform.rotation, desired, blend);
-    }
-
     internal float UpdateSize(Bounds groupBounds, float deltaTime, bool snapImmediately)
     {
         float requiredSize = CalculateRequiredSize(groupBounds, transform.position, transform.rotation,
@@ -211,6 +187,31 @@ public class CameraTargetGroup2D : MonoBehaviour
         isFraming = false;
     }
 
+    internal Quaternion CalculateRotation(Vector3 groupCenter, float deltaTime, bool snapImmediately)
+    {
+        Vector3 direction = groupCenter - transform.position;
+        if (!rotateToGroup || direction.sqrMagnitude < 0.000001f)
+        {
+            return transform.rotation;
+        }
+
+        direction.Normalize();
+        Vector3 up = Vector3.up;
+        if (Mathf.Abs(Vector3.Dot(direction, up)) > 0.999f)
+        {
+            up = Vector3.ProjectOnPlane(transform.up, direction);
+            if (up.sqrMagnitude < 0.000001f)
+            {
+                up = Vector3.forward;
+            }
+        }
+
+        Quaternion desired = Quaternion.LookRotation(direction, up);
+        float blend = snapImmediately || rotationDamping <= 0f
+            ? 1f : 1f - Mathf.Exp(-deltaTime / rotationDamping);
+        return Quaternion.Slerp(transform.rotation, desired, blend);
+    }
+
     // Gerçek kamera konumunu kullan: yumuşak takip gecikmesi de kadraja sığmalıdır.
     internal static float CalculateRequiredSize(Bounds groupBounds, Vector3 cameraPosition,
         Quaternion cameraRotation, float aspect, Vector2 padding, float minimumSize)
@@ -231,7 +232,9 @@ public class CameraTargetGroup2D : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (!showScenePreview || !isActiveAndEnabled || !TryGetGroupBounds(out Bounds groupBounds))
+        if (!showScenePreview || !isActiveAndEnabled ||
+            !TryGetComponent(out MainCamera mainCamera) || !mainCamera.Is2D ||
+            !TryGetGroupBounds(out Bounds groupBounds))
         {
             return;
         }

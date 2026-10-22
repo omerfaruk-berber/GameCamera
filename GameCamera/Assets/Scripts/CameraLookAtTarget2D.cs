@@ -1,21 +1,22 @@
 using UnityEngine;
 
 /// <summary>Kamera konumunu değiştirmeden bakış hedefini izler.</summary>
+[AddComponentMenu("")]
 [RequireComponent(typeof(MainCamera))]
 [DisallowMultipleComponent]
 public class CameraLookAtTarget2D : MonoBehaviour
 {
     [Header("Look At Settings")]
-    [SerializeField, Tooltip("Bakılacak hedef. Boşsa geçerli grubun merkezi, grup yoksa MainCamera takip hedefi kullanılır.")]
+    [SerializeField, Tooltip("Target to look at. If empty, the active group center or Main Camera follow target is used.")]
     private Transform lookAtTarget;
 
-    [SerializeField, Min(0f), Tooltip("Dönüşün yumuşama süresi (saniye). 0 hedefe anında döner.")]
+    [SerializeField, Min(0f), Tooltip("Rotation smoothing time in seconds. Set to 0 for an immediate rotation.")]
     private float rotationDamping = 0.15f;
 
-    [SerializeField, Tooltip("Bileşen kapatılınca etkinleştirmeden önceki kamera dönüşünü geri yükler.")]
+    [SerializeField, Tooltip("Restores the camera rotation captured before this feature was enabled.")]
     private bool restoreRotationOnDisable = true;
 
-    [SerializeField, Tooltip("Scene üzerinde bakış hedefine uzanan çizgiyi gösterir.")]
+    [SerializeField, Tooltip("Shows a line from the camera to the look-at target in the Scene view.")]
     private bool showScenePreview = true;
 
     private Quaternion initialRotation;
@@ -32,7 +33,7 @@ public class CameraLookAtTarget2D : MonoBehaviour
 
     private void OnDisable()
     {
-        if (restoreRotationOnDisable)
+        if (restoreRotationOnDisable && !GetComponent<MainCamera>().Is2D)
         {
             transform.rotation = initialRotation;
         }
@@ -51,6 +52,12 @@ public class CameraLookAtTarget2D : MonoBehaviour
     // MainCamera, konum takibinden sonra çağırır; ayrı bir LateUpdate yarışması oluşmaz.
     internal void ApplyRotation(float deltaTime, bool snapImmediately = false, Vector3? groupCenter = null)
     {
+        MainCamera mainCamera = GetComponent<MainCamera>();
+        if (mainCamera.Is2D)
+        {
+            return;
+        }
+
         if ((!snapImmediately && deltaTime <= 0f) || !TryGetFocusPosition(groupCenter, out Vector3 focusPosition))
         {
             return;
@@ -66,7 +73,6 @@ public class CameraLookAtTarget2D : MonoBehaviour
         Vector3 up = Vector3.up;
         if (Mathf.Abs(Vector3.Dot(direction, up)) > 0.999f)
         {
-            // Tam yukarı/aşağı bakarken geçerli bir yukarı ekseni seç.
             up = Vector3.ProjectOnPlane(transform.up, direction);
             if (up.sqrMagnitude < 0.000001f)
             {
@@ -88,7 +94,8 @@ public class CameraLookAtTarget2D : MonoBehaviour
             focusPosition = lookAtTarget.position;
             return true;
         }
-        if (!groupCenter.HasValue && TryGetComponent(out CameraTargetGroup2D group) &&
+        MainCamera mainCamera = GetComponent<MainCamera>();
+        if (mainCamera.Is2D && !groupCenter.HasValue && TryGetComponent(out CameraTargetGroup2D group) &&
             group.isActiveAndEnabled && group.TryGetGroupBounds(out Bounds groupBounds))
         {
             groupCenter = groupBounds.center;
@@ -106,7 +113,9 @@ public class CameraLookAtTarget2D : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (!showScenePreview || !isActiveAndEnabled || !TryGetFocusPosition(null, out Vector3 focusPosition))
+        if (!showScenePreview || !isActiveAndEnabled ||
+            !TryGetComponent(out MainCamera mainCamera) || mainCamera.Is2D ||
+            !TryGetFocusPosition(null, out Vector3 focusPosition))
         {
             return;
         }

@@ -6,7 +6,17 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class DirectorsCamera : MonoBehaviour
 {
+    [Header("Camera Settings")]
+    [SerializeField, Tooltip("Selects 2D orthographic or 3D perspective behavior.")]
+    private GameCameraMode cameraMode = GameCameraMode.Mode2D;
+
     private Camera controlledCamera;
+
+    /// <summary>The active 2D or 3D behavior mode.</summary>
+    public GameCameraMode CameraMode => cameraMode;
+
+    /// <summary>Returns true while the controller uses orthographic 2D behavior.</summary>
+    public bool Is2D => cameraMode == GameCameraMode.Mode2D;
 
     /// <summary>Aynı nesnedeki Unity Camera bileşenine erişir; editörde de kullanılabilir.</summary>
     public Camera ControlledCamera
@@ -39,14 +49,26 @@ public class DirectorsCamera : MonoBehaviour
 
     private void Reset()
     {
-        // İlk eklemede veya Reset komutunda 2B görünümle başla; diğer ayarları koru.
-        ControlledCamera.orthographic = true;
+        cameraMode = GameCameraMode.Mode2D;
+        ApplyCameraMode();
     }
 
     private void Awake()
     {
-        // Oyun başlarken yalnızca referansı al; kullanıcının görüntü seçimini koru.
         controlledCamera = GetComponent<Camera>();
+        ApplyCameraMode();
+    }
+
+    private void OnValidate()
+    {
+        ApplyCameraMode();
+    }
+
+    /// <summary>Changes the camera between orthographic 2D and perspective 3D behavior.</summary>
+    public void SetCameraMode(GameCameraMode newMode)
+    {
+        cameraMode = newMode;
+        ApplyCameraMode();
     }
 
     /// <summary>
@@ -56,5 +78,14 @@ public class DirectorsCamera : MonoBehaviour
     public void SetPose(Vector3 position, Quaternion rotation)
     {
         transform.SetPositionAndRotation(position, rotation);
+    }
+
+    private void ApplyCameraMode()
+    {
+        Camera attachedCamera = ControlledCamera;
+        if (attachedCamera != null)
+        {
+            attachedCamera.orthographic = Is2D;
+        }
     }
 }
