@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+[AddComponentMenu("Camera/Main Camera")]
 [RequireComponent(typeof(Camera))]
 [DisallowMultipleComponent]
 public class MainCamera : MonoBehaviour

@@ -43,7 +43,7 @@ Bu aşamada boş altyapı veya ek bağımlılık eklenmeyecek.
 
 ## Kurulum
 
-1. `MainCamera` bileşenini sahnedeki `Main Camera` nesnesine ekle.
+1. `Add Component > Camera > Main Camera` yoluyla `MainCamera` bileşenini sahnedeki `Main Camera` nesnesine ekle.
 2. Kameranın dönüşünü `(0, 0, 0)`, Z konumunu örneğin `-10` yap.
 3. Takip edilecek karakteri veya nesneyi `Target` alanına sürükle.
 4. `Offset` ile X/Y kadraj kaymasını ayarla; örneğin `(0, 1)` hedefin üstünü gösterir.
