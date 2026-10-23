@@ -35,7 +35,7 @@ Kullanım rehberi Türkçedir.
    kendin etkinleştir. DirectorsCamera'nın Enabled kutusu render geçişi yapmaz.
 
 Gövde sahneye kendiliğinden ikinci kamera eklemez. Kamera seçimi ve geçişleri isteğe
-bağlı Camera Shots özelliğiyle yapılır; Timeline bağlantısı içermez. Mevcut MainCamera
+bağlı Camera Shots özelliğiyle yapılır; Timeline bağlantısı Director Camera Track ile eklenir. Mevcut MainCamera
 özellikleri kendi gövdelerine bağlıdır ve Director's Camera menüsüne eklenmez.
 
 ## Koddan kullanım
@@ -145,8 +145,8 @@ Vector3 direction = dollyTrack.EvaluateTangent(0.25f);
 ```
 
 Sistem yeni bir paket veya Cinemachine bağımlılığı kullanmaz. Kamera geçişleri
-aşağıdaki Camera Shots özelliğiyle yapılabilir. Timeline bağlantısı ve otomatik
-çekim sıralama bu sürüme dahil değildir.
+aşağıdaki Camera Shots özelliğiyle yapılabilir. Timeline üzerinde çekimleri sıralama
+ve harmanlama Director Camera Track ile desteklenir.
 
 ## 3. Aşama — Camera Shots (eklendi)
 
@@ -248,8 +248,108 @@ anında kesme olarak değerlendirilir. Runtime'da kayıt eklemek otomatik seçim
 yeni çekim için ayrıca `ActivateShot` çağır.
 
 Bu özellik MainCamera'ya giriş/çıkış yapmaz; oyun kamerasını devreden çıkarma ve
-yeniden açma dışarıdan yönetilir. Timeline, otomatik çekim sıralama ve yeni paket
-bağımlılığı eklenmemiştir.
+yeniden açma dışarıdan yönetilir. Timeline desteği aşağıdaki track ile kullanılır;
+yeni paket bağımlılığı eklenmemiştir.
+
+## 4. Aşama — Director Camera Track / Timeline (eklendi)
+
+Projede kurulu Unity Timeline `1.8.10` kullanılır; Cinemachine gerekmez.
+`CameraShotTrack`, Camera Shots merkezine bağlanır. `CameraShotClip` sahnedeki bir
+çekimi seçer; mixer, kliplerin Timeline ağırlıklarına göre tek görüntü kamerasını
+yönetir. Sahne referansları Timeline asset'inde doğrudan saklanmaz; `PlayableDirector`
+üzerindeki exposed-reference bağlantıları kullanılır.
+
+### Kurulum ve kurgu
+
+1. Merkez Director's Camera üzerindeki `Camera Shots` panelinde `Create Timeline`
+   düğmesine bas ve yeni `.playable` asset'inin kaydedileceği konumu seç.
+2. Aynı sahnenin kökünde ayrı bir `Director Camera Timeline` nesnesi ve üzerinde
+   `PlayableDirector` oluşturulur. Yeni asset boş bir `Director Camera Track`
+   içerir ve track otomatik olarak bu Camera Shots merkezine bağlanır.
+3. Timeline penceresinde track'e `Camera Shot` klipleri ekle. Her klibin `Shot`
+   alanına merkezin `Shots` listesinde kayıtlı bir Director's Camera ata.
+4. Klipleri peş peşe yerleştirerek anında kesme; üst üste bindirerek geçiş tasarla.
+   Örtüşme ağırlıklarını Timeline'ın standart blend eğrileri belirler.
+5. Timeline imlecini ileri/geri sürükleyerek Play Mode dışında önizle. Oyunda
+   `PlayableDirector.Play()`, `Pause()`, `Stop()` veya `time` + `Evaluate()` kullan.
+
+Oluşturulan PlayableDirector'da `Play On Awake` kapalı ve bitiş modu `Hold` seçilidir.
+Oynatmayı sahnenin ihtiyacına göre başlat. Mevcut bir Timeline'da da `Director Camera
+Track` oluşturup Camera Shots bileşenini track binding alanına atayabilirsin.
+Asset, track ve sahne nesnesi oluşturma Undo grubundadır. Sahne nesneleri ve Timeline
+asset'i normal Unity kaydetme akışıyla saklanır; Camera Shots listesi değiştirilmez.
+
+### Dolly modu — klip başına seçim
+
+| Klip alanı | Davranış |
+| --- | --- |
+| `Shot` | Aynı merkezde kayıtlı bağımsız çekim kamerası. |
+| `Dolly Mode = Timeline` | Varsayılan. Ray pozu klibin yerel zamanından hesaplanır. |
+| `Start Position` / `End Position` | Timeline modunda rayın `0–1` başlangıç/bitiş konumu; varsayılan `0` ve `1`. Ters aralık ters yönde hareket sağlar. |
+| `Dolly Mode = Live Playback` | Cart'ın mevcut hız, tekrar, damping ve oynatma ayarlarıyla canlı hareketini kullanır. |
+
+Timeline modunda klibin süresi ray hareketinin süresidir. Örnekleme cart'ın ray
+mesafesini, yönünü, Transform'unu veya oynatma durumunu değiştirmez. Aynı zamana
+yeniden gidildiğinde aynı ray pozu elde edilir; aynı çekim farklı ray konumlarıyla
+kendisiyle örtüşebilir. `KeepRotation` ve dikey ray yönlerinde sabit başlangıç
+dönüşü kullanılır; geçmiş karelere bağlı Rotation Damping uygulanmaz. Follow Track
+ve Look At Target'ın mevcut 2D/3D kuralları korunur. Dolly'siz çekim kendi Transform
+pozuyla kullanılır; geçersiz rayda da bu poza dönülür ve Inspector'da uyarı gösterilir.
+
+Live Playback modunda yalnız pozitif ağırlıkla katkı veren çekim cart'ları ilerler.
+Örtüşme boyunca iki kaynak da ilerleyebilir; aynı cart birden fazla klipte kullanılsa
+bile kare başına bir kez ilerler. `Play On Start` kapalı veya cart duraklatılmışsa
+Timeline kendiliğinden `Play()` çağırmaz. Editör imlecini sürüklemek canlı oynatımın
+geçmişini geri sarmaz; editör önizlemesi o anki kaynak pozunu kullanır.
+
+### Sahiplik, geçiş ve son pozu tutma
+
+Bir merkez aynı anda yalnızca bir track mixer'ı tarafından yönetilebilir. Başka
+track veya PlayableDirector aynı merkezi devralmaya çalışırsa uyarı verilir ve
+ikinci kontrol reddedilir. Timeline kontrolünde manuel `ActivateShot` `false`
+döner; `ReleaseShot` etkisizdir ve bu Inspector düğmeleri devre dışıdır. Runtime
+durumu `IsTimelineControlled`, son pozu tutma durumu `IsHoldingShot` ile okunabilir.
+
+Geçerli kliplerin pozitif ağırlıkları normalize edilir. Konum, lens, kırpma
+mesafeleri ve arka plan rengi ağırlıklı; dönüşler kronolojik sırada quaternion
+harmanlamasıyla hesaplanır. Birden fazla klip desteklenir. Arka plan temizleme modu
+baskın klipten gelir. 2D ve 3D projeksiyonları örtüşürse harmanlama yerine en yüksek
+ağırlıklı klibe kesilir; eşitlikte daha sonra başlayan klip önceliklidir.
+
+Mixer her `Evaluate()` çağrısında sonucu hemen uygular. Oyunda canlı Dolly kaynakları
+LateUpdate sırasından sonra yeniden örneklenir; eski graph'tan kalan değerlendirmeler
+merkeze yazamaz. Merkez Dolly'si Timeline kontrolü ve son poz tutulurken durur.
+Kararlı değerlendirmede liste oluşturulmaz ve her karede sahne/bileşen taraması yapılmaz.
+
+`Pause()` görüntüyü ve canlı Dolly ilerlemesini dondurur; açık `Evaluate()` çağrıları
+yeni imleç pozunu değerlendirebilir. Klip boşluklarında veya geçerli klip kalmadığında
+son değerlendirilen poz tutulur. İlk geçerli klipten önce mevcut görüntü korunur.
+Oyunda `Stop()` son pozu tutar ve Timeline sahipliğini bırakır; bundan sonra manuel
+`ActivateShot` tutmayı sonlandırabilir. `ReleaseShot`, merkezde normal kamera
+kontrolünden önce kaydedilen temel poz ve lens ayarlarını geri yükler.
+
+Editör önizlemesi kapanınca son poz sahneye kalıcı yazılmaz: merkez Transform'u,
+kamera modu/lens/arka plan ayarları ve kaynak Camera/AudioListener etkinlikleri geri
+yüklenir. Fiziksel kameranın odak uzaklığı ve projeksiyon modu da geri yüklenir.
+Bu alanlar Timeline'ın property preview sistemine kaydedilir. Preview
+düzenlemeleri kalıcı prefab override oluşturmaz. Track binding değişikliği, graph
+yenileme, component kapatma ve nesne silinmesinde kontrol/snapshot temizliği yapılır.
+
+```csharp
+// timelineDirector, oluşturulan veya mevcut PlayableDirector referansıdır.
+timelineDirector.Play();
+timelineDirector.Pause();
+timelineDirector.time = 2.5;
+timelineDirector.Evaluate();
+timelineDirector.Stop(); // Oyunda son görüntüyü tutar.
+
+bool controlled = shotDirector.IsTimelineControlled;
+bool holding = shotDirector.IsHoldingShot;
+shotDirector.ActivateShot(nextShot); // Timeline durduktan sonra manuel yönetime geç.
+```
+
+Bu özellik tek kameranın poz ve lensini harmanlar; görüntüler arasında crossfade
+ve MainCamera'ya giriş/çıkış yönetimi yapmaz.
 
 ## Doğrulama ve kabul kontrolleri
 
@@ -278,6 +378,11 @@ bağımlılığı eklenmemiştir.
 - Seçilmeyen Dolly'nin beklediğini, yeniden seçimde devam ettiğini ve merkez Dolly ile yazma yarışı olmadığını doğrula.
 - Aktif çekim silinmesi/devre dışı kalması, son çekimin çıkarılması ve Release Shot durumlarını kontrol et.
 - Prefab örneği liste override'larını sahne kaydetme/yeniden açmayla ve kararlı runtime döngüsünde bellek tahsisini kontrol et.
+- Director Camera Track'te kesme, iki/çoklu örtüşme, aynı çekimin kendisiyle örtüşmesi ve ileri/geri seek akışını doğrula.
+- Klip başına Timeline/Live Playback Dolly modlarını, pause, stop, boşlukta tutma ve manuel yönetime dönüşü kontrol et.
+- Çakışan sahiplik, graph yeniden kurma, binding değiştirme ve çekim silinmesinde eski graph'ın yazmadığını doğrula.
+- Timeline penceresi önizlemesinde tüm serialized property yollarını, kaynak kamera/ses durumlarını ve normal/fiziksel kamera geri yüklemesini kontrol et.
+- Önizleme sonrası kaydedilmiş sahnenin temiz, prefab override'larının değişmemiş kaldığını doğrula.
 
 Derleme kontrolü, Unity içindeki görsel ve yaşam döngüsü kontrollerinin yerine
 geçmez. Çalıştırılamayan kontroller teslim sırasında ayrıca belirtilmelidir.
@@ -288,3 +393,13 @@ açma, kayıt/sahiplik, kamera/ses durumlarını geri yükleme, geçişler, yede
 seçimi ve Dolly bekleme/devam akışları doğrulandı. Kararlı merkez güncellemesinin
 1.000 çağrısında managed bellek tahsisi `0` bayt ölçüldü. Bu kontroller görüntüsüz
 batch oturumunda çalıştı; Game View ve Inspector'ın elle görsel kontrolü ayrıca yapılmalıdır.
+
+Timeline desteği aynı Unity sürümünde ayrı bir geçici projede 136 ana doğrulamadan
+geçti. Gerçek PlayableDirector graph'larıyla örtüşme, seek/self-overlap, iki Dolly
+modu, canlı kare sırası, pause/stop/hold, graph ve binding değişimi, kaynak silinmesi,
+manuel kamera regresyonu, asset kaydı ve Undo/Redo kontrol edildi. Gerçek Timeline
+penceresinde standart ve fiziksel kamera için 24'er serialized property yolu,
+tam snapshot geri yüklemesi, temiz sahne ve değişmeyen prefab override'ları doğrulandı.
+1.000 ağırlıklı merkez kompozisyon çağrısında managed bellek tahsisi `0` bayt ölçüldü.
+Testler görüntüsüz batch oturumunda çalıştırıldı; Game View görüntüsünün elle
+görsel değerlendirmesi yapılmadı.

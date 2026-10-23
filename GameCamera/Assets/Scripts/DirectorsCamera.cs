@@ -19,7 +19,7 @@ public class DirectorsCamera : MonoBehaviour
 
     // Shot carts keep their playback state while off screen. The rendering output has one pose writer.
     internal bool CanAdvanceDolly => isActiveAndEnabled &&
-        (ShotOwner == null || ShotOwner.ActiveShot == this) && CanApplyDollyPose;
+        (ShotOwner == null || ShotOwner.CanAdvanceShotDolly(this)) && CanApplyDollyPose;
 
     internal bool CanApplyDollyPose => OutputDirector == null || !OutputDirector.IsControllingOutput;
 

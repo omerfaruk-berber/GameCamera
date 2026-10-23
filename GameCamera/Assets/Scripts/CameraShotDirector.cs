@@ -34,6 +34,14 @@ public class CameraShotDirector : MonoBehaviour
     private bool runtimeInitialized;
     private bool hasStarted;
     private bool shotsChanged;
+    private object timelineOwner;
+    private CameraShotTimelineSample[] timelineSamples;
+    private int timelineSampleCount;
+    private bool timelinePlaybackAdvancing;
+    private bool timelineBlending;
+    private bool holdingShot;
+    private CameraState heldOutput;
+    private CameraState previewOutput;
 
     /// <summary>Configured shots in selection order. Use RegisterShot and UnregisterShot to change the list.</summary>
     public IReadOnlyList<DirectorsCamera> Shots => shotView ?? (shotView = shots.AsReadOnly());
@@ -42,7 +50,14 @@ public class CameraShotDirector : MonoBehaviour
     public DirectorsCamera ActiveShot => activeRegistration != null ? activeRegistration.Controller : null;
 
     /// <summary>Whether the output is currently moving toward the selected shot.</summary>
-    public bool IsBlending => activeRegistration != null && blendElapsed < blendDuration;
+    public bool IsBlending => IsTimelineControlled ? timelineBlending :
+        !holdingShot && activeRegistration != null && blendElapsed < blendDuration;
+
+    /// <summary>Whether an exclusive Timeline mixer currently controls this output.</summary>
+    public bool IsTimelineControlled => timelineOwner != null;
+
+    /// <summary>Whether the output is holding its last evaluated Timeline pose.</summary>
+    public bool IsHoldingShot => holdingShot;
 
     /// <summary>Default transition duration used by the Inspector controls.</summary>
     public float DefaultBlendDuration => defaultBlendDuration;
@@ -70,7 +85,7 @@ public class CameraShotDirector : MonoBehaviour
     private void Start()
     {
         hasStarted = true;
-        if (runtimeInitialized && activeRegistration == null)
+        if (runtimeInitialized && activeRegistration == null && !IsTimelineControlled && !holdingShot)
         {
             SelectStartingShot();
         }
@@ -85,7 +100,14 @@ public class CameraShotDirector : MonoBehaviour
 
     private void OnDisable()
     {
+        timelineOwner = null;
+        ClearTimelineSamples();
         ReleaseShot();
+        RestoreRegistrations();
+    }
+
+    private void RestoreRegistrations()
+    {
         foreach (ShotRegistration registration in registrations.Values)
         {
             registration.Restore(this);
@@ -141,7 +163,7 @@ public class CameraShotDirector : MonoBehaviour
     /// <summary>Selects a registered, enabled shot during play. Invalid durations cut immediately.</summary>
     public bool ActivateShot(DirectorsCamera shot, float blendDuration = 0f)
     {
-        if (!Application.isPlaying || !isActiveAndEnabled || !InitializeRuntime())
+        if (IsTimelineControlled || !Application.isPlaying || !isActiveAndEnabled || !InitializeRuntime())
         {
             return false;
         }
@@ -162,6 +184,11 @@ public class CameraShotDirector : MonoBehaviour
     /// <summary>Stops shot control and restores the output pose and settings saved before selection began.</summary>
     public void ReleaseShot()
     {
+        if (IsTimelineControlled)
+        {
+            return;
+        }
+        holdingShot = false;
         activeRegistration = null;
         blendDuration = 0f;
         blendElapsed = 0f;
@@ -169,10 +196,212 @@ public class CameraShotDirector : MonoBehaviour
         {
             if (cameraController != null && outputCamera != null && outputTransform != null)
             {
-                savedOutput.Apply(cameraController, outputCamera, outputTransform);
+                savedOutput.Restore(cameraController, outputCamera, outputTransform);
             }
             hasSavedOutput = false;
         }
+    }
+
+    // A graph owns one lease. Old graph callbacks cannot write into a newer session.
+    internal bool BeginTimelineControl(object owner)
+    {
+        if (owner == null || !isActiveAndEnabled)
+        {
+            return false;
+        }
+        if (timelineOwner != null)
+        {
+            return ReferenceEquals(timelineOwner, owner);
+        }
+        CacheOutput();
+        if (!cameraController.isActiveAndEnabled)
+        {
+            return false;
+        }
+        CameraState current = CameraState.Capture(cameraController, outputCamera, outputTransform);
+        if (!InitializeRuntime())
+        {
+            return false;
+        }
+        if (!Application.isPlaying)
+        {
+            previewOutput = current;
+        }
+        if (!hasSavedOutput)
+        {
+            savedOutput = current;
+            hasSavedOutput = true;
+        }
+        timelineOwner = owner;
+        heldOutput = current;
+        holdingShot = true;
+        blendDuration = 0f;
+        blendElapsed = 0f;
+        return true;
+    }
+
+    internal bool IsTimelineShotUsable(DirectorsCamera shot)
+    {
+        if (shotsChanged && runtimeInitialized)
+        {
+            SynchronizeShots();
+        }
+        return shot != null && registrations.TryGetValue(shot, out ShotRegistration registration) && registration.IsUsable;
+    }
+
+    internal bool IsTimelineOwner(object owner) => ReferenceEquals(timelineOwner, owner);
+
+    internal void ApplyTimelineFrame(object owner, CameraShotTimelineSample[] samples, int count,
+        bool livePlaybackAdvancing)
+    {
+        if (!ReferenceEquals(timelineOwner, owner) || !isActiveAndEnabled || samples == null)
+        {
+            return;
+        }
+        if (shotsChanged)
+        {
+            SynchronizeShots();
+        }
+        timelineSamples = samples;
+        timelineSampleCount = Mathf.Clamp(count, 0, samples.Length);
+        timelinePlaybackAdvancing = livePlaybackAdvancing && Application.isPlaying;
+        ComposeTimelineFrame();
+    }
+
+    internal void SetTimelinePlaybackAdvancing(object owner, bool advancing)
+    {
+        if (ReferenceEquals(timelineOwner, owner))
+        {
+            timelinePlaybackAdvancing = advancing && Application.isPlaying;
+        }
+    }
+
+    internal void EndTimelineControl(object owner)
+    {
+        if (!ReferenceEquals(timelineOwner, owner) || timelineOwner == null)
+        {
+            return;
+        }
+        timelineOwner = null;
+        ClearTimelineSamples();
+        if (Application.isPlaying)
+        {
+            // Keep a value snapshot, never a live reference to a cart that can keep moving.
+            holdingShot = true;
+            if (cameraController != null && outputCamera != null && outputTransform != null)
+            {
+                heldOutput.Apply(cameraController, outputCamera, outputTransform);
+            }
+        }
+        else
+        {
+            ReleaseShot();
+            if (cameraController != null && outputCamera != null && outputTransform != null)
+            {
+                previewOutput.Restore(cameraController, outputCamera, outputTransform);
+            }
+            RestoreRegistrations();
+        }
+    }
+
+    internal bool CanAdvanceShotDolly(DirectorsCamera shot)
+    {
+        if (cameraController == null || !cameraController.isActiveAndEnabled)
+        {
+            return false;
+        }
+        if (IsTimelineControlled)
+        {
+            if (!timelinePlaybackAdvancing)
+            {
+                return false;
+            }
+            for (int i = 0; i < timelineSampleCount; i++)
+            {
+                CameraShotTimelineSample sample = timelineSamples[i];
+                if (sample.IsLive && sample.Shot == shot && IsPositiveWeight(sample.Weight) && IsTimelineShotUsable(shot))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return !holdingShot && ActiveShot == shot;
+    }
+
+    private void ComposeTimelineFrame()
+    {
+        if (cameraController == null || outputCamera == null || !cameraController.isActiveAndEnabled)
+        {
+            return;
+        }
+        float accumulatedWeight = 0f;
+        float dominantWeight = -1f;
+        int contributorCount = 0;
+        bool mixedProjection = false;
+        GameCameraMode firstMode = default;
+        bool firstOrthographic = false;
+        CameraState mixed = default;
+        CameraState dominant = default;
+        ShotRegistration dominantRegistration = null;
+        for (int i = 0; i < timelineSampleCount; i++)
+        {
+            CameraShotTimelineSample sample = timelineSamples[i];
+            if (!IsPositiveWeight(sample.Weight) || sample.Shot == null ||
+                !registrations.TryGetValue(sample.Shot, out ShotRegistration registration) || !registration.IsUsable)
+            {
+                continue;
+            }
+            CameraState state = registration.Capture();
+            if (sample.HasPoseOverride)
+            {
+                state.Position = sample.Position;
+                state.Rotation = sample.Rotation;
+            }
+            if (contributorCount == 0)
+            {
+                mixed = state;
+                firstMode = state.Mode;
+                firstOrthographic = state.Orthographic;
+            }
+            else
+            {
+                mixedProjection |= state.Mode != firstMode || state.Orthographic != firstOrthographic;
+                mixed = CameraState.Interpolate(mixed, state, sample.Weight / (accumulatedWeight + sample.Weight));
+            }
+            // Mixer inputs are chronological; equal weights choose the later incoming shot.
+            if (sample.Weight >= dominantWeight)
+            {
+                dominantWeight = sample.Weight;
+                dominant = state;
+                dominantRegistration = registration;
+            }
+            accumulatedWeight += sample.Weight;
+            contributorCount++;
+        }
+
+        timelineBlending = !mixedProjection && contributorCount > 1;
+        holdingShot = contributorCount == 0;
+        if (contributorCount > 0)
+        {
+            mixed.ClearFlags = dominant.ClearFlags;
+            heldOutput = mixedProjection ? dominant : mixed;
+            activeRegistration = dominantRegistration;
+        }
+        heldOutput.Apply(cameraController, outputCamera, outputTransform);
+    }
+
+    private static bool IsPositiveWeight(float weight)
+    {
+        return weight > 0f && !float.IsInfinity(weight) && !float.IsNaN(weight);
+    }
+
+    private void ClearTimelineSamples()
+    {
+        timelineSamples = null;
+        timelineSampleCount = 0;
+        timelinePlaybackAdvancing = false;
+        timelineBlending = false;
     }
 
     private void CacheOutput()
@@ -247,7 +476,7 @@ public class CameraShotDirector : MonoBehaviour
             registrations.Add(shot, new ShotRegistration(shot, this));
         }
 
-        if (activeRegistration != null && (!activeRegistration.IsUsable ||
+        if (!IsTimelineControlled && !holdingShot && activeRegistration != null && (!activeRegistration.IsUsable ||
             !registrations.ContainsValue(activeRegistration)))
         {
             SelectFallback();
@@ -283,6 +512,7 @@ public class CameraShotDirector : MonoBehaviour
 
     private void SelectShot(ShotRegistration registration, float duration)
     {
+        holdingShot = false;
         if (!hasSavedOutput)
         {
             savedOutput = CameraState.Capture(cameraController, outputCamera, outputTransform);
@@ -310,13 +540,33 @@ public class CameraShotDirector : MonoBehaviour
         {
             SynchronizeShots();
         }
-        if (activeRegistration == null)
+        if (cameraController == null || !cameraController.isActiveAndEnabled)
         {
+            if (!IsTimelineControlled && !holdingShot)
+            {
+                ReleaseShot();
+            }
             return;
         }
-        if (!cameraController.isActiveAndEnabled)
+        if (IsTimelineControlled)
         {
-            ReleaseShot();
+            if (timelinePlaybackAdvancing)
+            {
+                ComposeTimelineFrame();
+            }
+            else
+            {
+                heldOutput.Apply(cameraController, outputCamera, outputTransform);
+            }
+            return;
+        }
+        if (holdingShot)
+        {
+            heldOutput.Apply(cameraController, outputCamera, outputTransform);
+            return;
+        }
+        if (activeRegistration == null)
+        {
             return;
         }
         if (!activeRegistration.IsUsable)
@@ -405,6 +655,8 @@ public class CameraShotDirector : MonoBehaviour
         public bool Orthographic;
         public float Size;
         public float FieldOfView;
+        public float FocalLength;
+        public bool UsesPhysicalProperties;
         public float NearClip;
         public float FarClip;
         public Color Background;
@@ -420,6 +672,8 @@ public class CameraShotDirector : MonoBehaviour
                 Orthographic = camera.orthographic,
                 Size = camera.orthographicSize,
                 FieldOfView = camera.fieldOfView,
+                FocalLength = camera.focalLength,
+                UsesPhysicalProperties = camera.usePhysicalProperties,
                 NearClip = camera.nearClipPlane,
                 FarClip = camera.farClipPlane,
                 Background = camera.backgroundColor,
@@ -458,6 +712,14 @@ public class CameraShotDirector : MonoBehaviour
             camera.farClipPlane = FarClip;
             camera.backgroundColor = Background;
             camera.clearFlags = ClearFlags;
+        }
+
+        public void Restore(DirectorsCamera controller, Camera camera, Transform pose)
+        {
+            Apply(controller, camera, pose);
+            // Restore the original physical lens rather than round-tripping it through FOV.
+            camera.focalLength = FocalLength;
+            camera.usePhysicalProperties = UsesPhysicalProperties;
         }
     }
 }

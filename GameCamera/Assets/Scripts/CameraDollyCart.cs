@@ -207,6 +207,37 @@ public class CameraDollyCart : MonoBehaviour
         ApplyCurrentPose(0f, true);
     }
 
+    /// <summary>
+    /// Samples a Timeline pose without changing the cart's position, playback state, or Transform.
+    /// The caller supplies a fixed rotation reference so seeking does not depend on previous frames.
+    /// </summary>
+    internal bool TryEvaluatePose(float normalizedPosition, int direction, Quaternion baselineRotation,
+        out Vector3 position, out Quaternion rotation)
+    {
+        position = transform.position;
+        rotation = baselineRotation;
+        if (track == null || !track.IsValid)
+        {
+            return false;
+        }
+
+        if (cameraController == null)
+        {
+            cameraController = GetComponent<DirectorsCamera>();
+        }
+
+        if (cameraController == null)
+        {
+            return false;
+        }
+
+        float clampedPosition = Mathf.Clamp01(normalizedPosition);
+        position = track.EvaluatePosition(clampedPosition);
+        rotation = CalculateDesiredRotation(position, clampedPosition, direction < 0 ? -1 : 1,
+            baselineRotation);
+        return true;
+    }
+
     private void EnsureInitialized()
     {
         if (!isInitialized)
@@ -267,30 +298,44 @@ public class CameraDollyCart : MonoBehaviour
     private Quaternion CalculateRotation(Vector3 position, float deltaTime, bool snapRotation)
     {
         Quaternion currentRotation = transform.rotation;
+        Quaternion desiredRotation = CalculateDesiredRotation(position, NormalizedPosition, travelDirection,
+            currentRotation);
+        if (snapRotation || rotationDamping <= 0f || deltaTime <= 0f)
+        {
+            return desiredRotation;
+        }
+
+        float blend = 1f - Mathf.Exp(-deltaTime / rotationDamping);
+        return Quaternion.Slerp(currentRotation, desiredRotation, blend);
+    }
+
+    private Quaternion CalculateDesiredRotation(Vector3 position, float normalizedPosition, int directionSign,
+        Quaternion baselineRotation)
+    {
         Vector3 direction;
 
         switch (orientation)
         {
             case DollyOrientationMode.FollowTrack:
-                direction = track.EvaluateTangent(NormalizedPosition) * travelDirection;
+                direction = track.EvaluateTangent(normalizedPosition) * directionSign;
                 break;
 
             case DollyOrientationMode.LookAtTarget:
                 if (cameraController.Is2D)
                 {
-                    return currentRotation;
+                    return baselineRotation;
                 }
 
                 direction = lookAtTarget != null ? lookAtTarget.position - position : Vector3.zero;
                 break;
 
             default:
-                return currentRotation;
+                return baselineRotation;
         }
 
         if (direction.sqrMagnitude <= 0.000001f)
         {
-            return currentRotation;
+            return baselineRotation;
         }
 
         Quaternion desiredRotation;
@@ -299,7 +344,7 @@ public class CameraDollyCart : MonoBehaviour
             Vector2 planarDirection = new Vector2(direction.x, direction.y);
             if (planarDirection.sqrMagnitude <= 0.000001f)
             {
-                return currentRotation;
+                return baselineRotation;
             }
 
             float angle = Mathf.Atan2(planarDirection.y, planarDirection.x) * Mathf.Rad2Deg - 90f;
@@ -310,7 +355,7 @@ public class CameraDollyCart : MonoBehaviour
             Vector3 up = Vector3.up;
             if (Mathf.Abs(Vector3.Dot(direction.normalized, up)) > 0.999f)
             {
-                up = Vector3.ProjectOnPlane(transform.up, direction).normalized;
+                up = Vector3.ProjectOnPlane(baselineRotation * Vector3.up, direction).normalized;
                 if (up.sqrMagnitude <= 0.000001f)
                 {
                     up = Vector3.forward;
@@ -320,13 +365,7 @@ public class CameraDollyCart : MonoBehaviour
             desiredRotation = Quaternion.LookRotation(direction.normalized, up) * Quaternion.Euler(rotationOffset);
         }
 
-        if (snapRotation || rotationDamping <= 0f || deltaTime <= 0f)
-        {
-            return desiredRotation;
-        }
-
-        float blend = 1f - Mathf.Exp(-deltaTime / rotationDamping);
-        return Quaternion.Slerp(currentRotation, desiredRotation, blend);
+        return desiredRotation;
     }
 
     private void OnDrawGizmos()

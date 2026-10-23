@@ -1,7 +1,10 @@
 using UnityEditor;
+using UnityEditor.Timeline;
 using UnityEditorInternal;
 using UnityEngine;
+using UnityEngine.Playables;
 using UnityEngine.SceneManagement;
+using UnityEngine.Timeline;
 
 /// <summary>Shot creation, assignment and playback controls shared by both Inspector entry points.</summary>
 [CustomEditor(typeof(CameraShotDirector))]
@@ -77,6 +80,21 @@ public class CameraShotDirectorEditor : Editor
                 GUIUtility.ExitGUI();
             }
         }
+        using (new EditorGUI.DisabledScope(prefabAsset || Application.isPlaying))
+        {
+            if (GUILayout.Button(new GUIContent("Create Timeline", "Creates a Timeline asset and a separate PlayableDirector bound to this output. Add Camera Shot clips to arrange your sequence.")))
+            {
+                string path = EditorUtility.SaveFilePanelInProject("Create Director Camera Timeline",
+                    "Director Camera Timeline", "playable", "Choose where to save the Timeline asset.");
+                if (!string.IsNullOrEmpty(path))
+                {
+                    PlayableDirector timelineDirector = CreateTimeline(director, path);
+                    Selection.activeGameObject = timelineDirector.gameObject;
+                    TimelineEditor.GetOrCreateWindow().SetTimeline(timelineDirector);
+                    GUIUtility.ExitGUI();
+                }
+            }
+        }
         if (prefabAsset)
         {
             EditorGUILayout.HelpBox("Create scene shots from a scene instance. Existing references can still be edited in Prefab Mode.", MessageType.Info);
@@ -88,8 +106,15 @@ public class CameraShotDirectorEditor : Editor
             {
                 EditorGUILayout.ObjectField("Active Shot", director.ActiveShot, typeof(DirectorsCamera), true);
                 EditorGUILayout.Toggle("Blending", director.IsBlending);
+                EditorGUILayout.Toggle("Timeline Controlled", director.IsTimelineControlled);
+                EditorGUILayout.Toggle("Holding Shot", director.IsHoldingShot);
             }
-            using (new EditorGUI.DisabledScope(director.ActiveShot == null))
+            if (director.IsTimelineControlled)
+            {
+                EditorGUILayout.HelpBox("Timeline controls this output. Stop the sequence to select or release shots manually.", MessageType.Info);
+            }
+            using (new EditorGUI.DisabledScope(director.IsTimelineControlled ||
+                (director.ActiveShot == null && !director.IsHoldingShot)))
             {
                 if (GUILayout.Button(new GUIContent("Release Shot", "Restores the output pose and camera settings saved before shot selection began.")))
                 {
@@ -135,7 +160,8 @@ public class CameraShotDirectorEditor : Editor
                 Selection.activeGameObject = shot.gameObject;
             }
         }
-        using (new EditorGUI.DisabledScope(!Application.isPlaying || !director.isActiveAndEnabled || shot == null))
+        using (new EditorGUI.DisabledScope(!Application.isPlaying || !director.isActiveAndEnabled ||
+            director.IsTimelineControlled || shot == null))
         {
             if (GUI.Button(activateRect, new GUIContent("Activate", "Selects this shot using Default Blend Duration.")))
             {
@@ -236,5 +262,38 @@ public class CameraShotDirectorEditor : Editor
         Undo.CollapseUndoOperations(undoGroup);
         EditorGUIUtility.PingObject(shotObject);
         SceneView.RepaintAll();
+    }
+
+    /// <summary>Creates the authoring objects without modifying an existing scene camera hierarchy.</summary>
+    internal static PlayableDirector CreateTimeline(CameraShotDirector director, string assetPath)
+    {
+        // Preserve any existing asset if an already-used filename was chosen.
+        assetPath = AssetDatabase.GenerateUniqueAssetPath(assetPath);
+        Undo.IncrementCurrentGroup();
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("Create Director Camera Timeline");
+
+        TimelineAsset timeline = ScriptableObject.CreateInstance<TimelineAsset>();
+        timeline.name = System.IO.Path.GetFileNameWithoutExtension(assetPath);
+        AssetDatabase.CreateAsset(timeline, assetPath);
+        Undo.RegisterCreatedObjectUndo(timeline, "Create Camera Timeline Asset");
+        // Timeline records its own track creation and parent-list changes in this Undo group.
+        CameraShotTrack track = timeline.CreateTrack<CameraShotTrack>(null, "Director Camera Track");
+
+        GameObject timelineObject = new GameObject("Director Camera Timeline");
+        SceneManager.MoveGameObjectToScene(timelineObject, director.gameObject.scene);
+        Undo.RegisterCreatedObjectUndo(timelineObject, "Create Camera Timeline Director");
+        PlayableDirector playableDirector = Undo.AddComponent<PlayableDirector>(timelineObject);
+        Undo.RecordObject(playableDirector, "Bind Director Camera Timeline");
+        playableDirector.playOnAwake = false;
+        playableDirector.extrapolationMode = DirectorWrapMode.Hold;
+        playableDirector.playableAsset = timeline;
+        playableDirector.SetGenericBinding(track, director);
+        EditorUtility.SetDirty(playableDirector);
+        EditorUtility.SetDirty(timeline);
+        AssetDatabase.SaveAssetIfDirty(timeline);
+        Undo.CollapseUndoOperations(undoGroup);
+        EditorGUIUtility.PingObject(timeline);
+        return playableDirector;
     }
 }
