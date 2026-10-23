@@ -92,7 +92,7 @@ public class CameraDollyCart : MonoBehaviour
 
     private void Start()
     {
-        InitializePosition();
+        EnsureInitialized();
         if (playOnStart)
         {
             Play();
@@ -113,13 +113,18 @@ public class CameraDollyCart : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (!isPlaying || track == null || !track.IsValid || Time.deltaTime <= 0f)
+        UpdatePlayback(Time.deltaTime);
+    }
+
+    private void UpdatePlayback(float deltaTime)
+    {
+        if (!isPlaying || !cameraController.CanAdvanceDolly || track == null || !track.IsValid || deltaTime <= 0f)
         {
             return;
         }
 
         float length = track.Length;
-        float movement = speed * Time.deltaTime;
+        float movement = speed * deltaTime;
 
         switch (playbackMode)
         {
@@ -142,7 +147,7 @@ public class CameraDollyCart : MonoBehaviour
                 break;
         }
 
-        ApplyCurrentPose(Time.deltaTime, false);
+        ApplyCurrentPose(deltaTime, false);
     }
 
     /// <summary>Cart'ın kullanacağı rayı değiştirir; yeni ray başlangıç konumundan hazırlanır.</summary>
@@ -247,6 +252,11 @@ public class CameraDollyCart : MonoBehaviour
         if (cameraController == null)
         {
             cameraController = GetComponent<DirectorsCamera>();
+        }
+
+        if (!cameraController.CanApplyDollyPose)
+        {
+            return;
         }
 
         Vector3 position = track.EvaluatePosition(NormalizedPosition);

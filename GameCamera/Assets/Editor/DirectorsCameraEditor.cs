@@ -6,7 +6,9 @@ using UnityEngine;
 public class DirectorsCameraEditor : Editor
 {
     private Editor dollyEditor;
+    private Editor shotsEditor;
     private bool dollyExpanded = true;
+    private bool shotsExpanded = true;
 
     public override void OnInspectorGUI()
     {
@@ -28,6 +30,7 @@ public class DirectorsCameraEditor : Editor
         }
 
         DrawDollyFeature();
+        DrawShotsFeature();
     }
 
     private void DrawBackgroundSettings()
@@ -85,8 +88,75 @@ public class DirectorsCameraEditor : Editor
                 });
         }
 
+        CameraShotDirector shotsFeature = controller.GetComponent<CameraShotDirector>();
+        if (shotsFeature != null)
+        {
+            menu.AddDisabledItem(new GUIContent("Camera Shots (Added)"), true);
+        }
+        else if (controller.GetComponent<MainCamera>() != null ||
+            CameraShotDirectorEditor.FindConfiguredOwner(controller) != null)
+        {
+            menu.AddDisabledItem(new GUIContent("Camera Shots (Independent Output Only)",
+                "A managed shot or MainCamera cannot also be a shot director."));
+        }
+        else
+        {
+            menu.AddItem(new GUIContent("Camera Shots", "Manages independent shots through this single rendering camera."), false, () =>
+            {
+                if (controller == null || controller.GetComponent<CameraShotDirector>() != null ||
+                    CameraShotDirectorEditor.FindConfiguredOwner(controller) != null)
+                {
+                    return;
+                }
+                Undo.AddComponent<CameraShotDirector>(controller.gameObject);
+                Repaint();
+                SceneView.RepaintAll();
+            });
+        }
+
         menu.ShowAsContext();
     }
+
+    private void DrawShotsFeature()
+    {
+        CameraShotDirector feature = ((DirectorsCamera)target).GetComponent<CameraShotDirector>();
+        if (feature == null)
+        {
+            ReleaseEditor(ref shotsEditor);
+            return;
+        }
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                shotsExpanded = EditorGUILayout.Foldout(shotsExpanded, "Camera Shots", true);
+                EditorGUI.BeginChangeCheck();
+                bool enabled = GUILayout.Toggle(feature.enabled, new GUIContent("Enabled", "Enable or disable shot management."));
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(feature, "Toggle Camera Shots");
+                    feature.enabled = enabled;
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(feature);
+                    EditorUtility.SetDirty(feature);
+                    SceneView.RepaintAll();
+                }
+                if (GUILayout.Button(new GUIContent("Remove", "Removes shot management without deleting any shot or Dolly Track objects."), GUILayout.Width(65f)))
+                {
+                    ReleaseEditor(ref shotsEditor);
+                    Undo.DestroyObjectImmediate(feature);
+                    SceneView.RepaintAll();
+                    GUIUtility.ExitGUI();
+                }
+            }
+            if (shotsExpanded)
+            {
+                CreateCachedEditor(feature, null, ref shotsEditor);
+                shotsEditor.OnInspectorGUI();
+            }
+        }
+    }
+
+    public override bool RequiresConstantRepaint() => Application.isPlaying;
 
     private void DrawDollyFeature()
     {
@@ -232,6 +302,7 @@ public class DirectorsCameraEditor : Editor
     private void OnDisable()
     {
         ReleaseEditor(ref dollyEditor);
+        ReleaseEditor(ref shotsEditor);
     }
 
     private static void ReleaseEditor(ref Editor cachedEditor)

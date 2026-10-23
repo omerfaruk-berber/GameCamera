@@ -12,6 +12,17 @@ public class DirectorsCamera : MonoBehaviour
 
     private Camera controlledCamera;
 
+    /// <summary>The runtime director that owns this shot; null for an independent camera.</summary>
+    public CameraShotDirector ShotOwner { get; internal set; }
+
+    internal CameraShotDirector OutputDirector { get; set; }
+
+    // Shot carts keep their playback state while off screen. The rendering output has one pose writer.
+    internal bool CanAdvanceDolly => isActiveAndEnabled &&
+        (ShotOwner == null || ShotOwner.ActiveShot == this) && CanApplyDollyPose;
+
+    internal bool CanApplyDollyPose => OutputDirector == null || !OutputDirector.IsControllingOutput;
+
     /// <summary>The active 2D or 3D behavior mode.</summary>
     public GameCameraMode CameraMode => cameraMode;
 
