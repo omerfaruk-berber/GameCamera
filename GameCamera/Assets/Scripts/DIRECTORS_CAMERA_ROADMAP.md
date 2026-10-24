@@ -164,8 +164,8 @@ ayrı çizilmez. Merkez, seçilen çekimin konumunu ve kamera ayarlarını uygul
    ayarlarını birbirinden bağımsız düzenle. Her çekime kendi Dolly özelliği eklenebilir.
 4. `Starting Shot` alanını seç. Boş, geçersiz veya liste dışında bırakılırsa
    listedeki ilk kullanılabilir çekim oyun başlangıcında anında seçilir.
-5. `Default Blend Duration` değerini ayarla. Varsayılan `0`, anında kesmedir;
-   örneğin `1.5` değeri Inspector'daki `Activate` düğmelerine 1,5 saniyelik geçiş verir.
+5. `Transition` seçeneğini ayarla. Varsayılan `Cut`, anında kesmedir. `Gentle`,
+   `Custom` ve `Blur` seçenekleri aşağıda açıklanmıştır.
 6. Play Mode'da satırdaki `Activate` ile çekimi seç. `Select`, çekim nesnesini
    Hierarchy'de seçer. Liste sırası varsayılan ve yedek çekim seçiminin önceliğidir.
 
@@ -193,12 +193,32 @@ Merkez; çekimin dünya konumunu, dönüşünü, kamera modunu, ortografik boyut
 görüş açısını, near/far clip mesafelerini ve arka plan ayarlarını uygular.
 Render Texture, culling mask, depth ve render pipeline ayarları merkezde kalır.
 
-Yumuşak geçişte konum, lens, kırpma mesafeleri ve arka plan rengi doğrusal;
-dönüş quaternion interpolasyonuyla değişir. Arka plan temizleme modu hedef çekimden
+Inspector'daki `Transition` alanı manuel çekim seçimi için dört seçenek sunar:
+
+| Seçenek | Davranış |
+| --- | --- |
+| `Cut` | Varsayılan; çekime anında geçer. |
+| `Gentle` | 1,25 saniyede yavaş ve yumuşak geçer; görüntü efekti uygulamaz. |
+| `Custom` | `Transition Speed` slider'ıyla hızı ayarlanır. `1` değeri 1 saniye, `4` değeri 0,25 saniye, `0.25` değeri 4 saniye sürer. Büyük değer daha hızlıdır. |
+| `Blur` | 0,35 saniyelik yumuşak geçiş boyunca görüntünün kenarlarını bulanıklaştırır. Merkez net kalır; efekt geçişin ortasında güçlenir, sonunda tamamen kalkar. |
+
+Yumuşak preset'ler başlangıç ve bitişte hareketi yavaşlatır. Geçişe göre konum,
+lens, kırpma mesafeleri ve arka plan rengi doğrusal; dönüş quaternion
+interpolasyonuyla değişir. Arka plan temizleme modu hedef çekimden
 alınır. Gelen çekim hareket ediyorsa güncel pozu kullanılır. Geçiş sürerken başka
 çekim seçilirse yeni geçiş o anki merkez görüntüsünden başlar. Bu bir konum/lens
 geçişidir; iki görüntüyü üst üste çizen crossfade değildir. Farklı 2D/3D projeksiyonları
 arasında ve geçiş sırasında projeksiyon değiştirilirse anında kesme yapılır.
+
+Blur, projenin mevcut URP 2D renderer'ındaki `Camera Shot Blur` render özelliği ve
+ayrı shader ile uygulanır. Yalnızca geçiş yapan merkez kamerayı etkiler;
+geçiş yokken render pass eklenmez. Başka bir URP renderer'a geçildiğinde `Blur`
+seçimi gerekli özelliği editörde o renderer'a ekler; işlem Undo/Redo destekler.
+Render özelliğindeki shader referansı build'e dahil edilir. Yeni paket gerekmez.
+Geçiş bittiğinde, anında seçimde, `Release Shot` çağrısında, özellik kapatılınca veya
+Timeline kontrolü devralınca efekt temizlenir. Oyun duraklatılırsa geçiş ve efektin
+ilerlemesi de durur. Timeline örtüşmeleri kendi klip ağırlıklarını kullanır;
+manuel `Transition` seçimi Timeline kliplerine ek efekt uygulamaz.
 
 Yalnız seçili çekimin Dolly'si otomatik ilerler. Diğer çekimler ray konumunu ve
 oynatma durumunu korur; yeniden seçilince kaldıkları yerden devam eder.
@@ -226,9 +246,17 @@ mevcut kamera davranışını değiştirmez.
 // shotDirector, merkezdeki CameraShotDirector referansıdır.
 shotDirector.RegisterShot(closeUpCamera);
 
-// Anında veya süreli geçiş. Yalnızca Play Mode'da ve kayıtlı, etkin çekimler için çalışır.
+// Inspector'da seçili preset'i kullan. Yalnızca Play Mode'da, kayıtlı ve etkin çekimlerde çalışır.
 bool selected = shotDirector.ActivateShot(closeUpCamera);
+
+// Preset'i ve Custom hızını koddan da ayarlayabilirsin.
+shotDirector.Transition = CameraShotTransition.Custom;
+shotDirector.TransitionSpeed = 2f; // 0,5 saniyelik yumuşak geçiş.
+shotDirector.ActivateShot(wideCamera);
+
+// Açık süre verilirse preset yerine önceki doğrusal, efektsiz geçiş API'si kullanılır.
 shotDirector.ActivateShot(wideCamera, blendDuration: 1.5f);
+shotDirector.ActivateShot(closeUpCamera, blendDuration: 0f); // Her preset'te anında kesme.
 
 DirectorsCamera current = shotDirector.ActiveShot;
 bool transitioning = shotDirector.IsBlending;
@@ -240,8 +268,11 @@ shotDirector.UnregisterShot(closeUpCamera);
 shotDirector.ReleaseShot();
 ```
 
-`Shots` salt okunur listeyi, `DefaultBlendDuration` Inspector düğmelerinin varsayılan
+`Shots` salt okunur listeyi, `DefaultBlendDuration` seçili preset'in saniye cinsinden
 süresini, çekim üzerindeki `ShotOwner` runtime sahibi olan merkezi verir.
+`Transition` preset'i, `TransitionSpeed` yalnız Custom preset'inin hızını yönetir;
+hız aralığı `0.25–4` değerleriyle sınırlıdır. Başlangıç ve yedek çekim seçimi her
+zaman anındadır. Bir geçiş başladıktan sonra ayar değişikliği sonraki seçimi etkiler.
 `RegisterShot` ve `UnregisterShot` kayıt değişimini bildirir; `ActivateShot` geçersiz
 seçimde `false` döner ve mevcut seçimi korur. Negatif, NaN veya sonsuz geçiş süreleri
 anında kesme olarak değerlendirilir. Runtime'da kayıt eklemek otomatik seçim yapmaz;
@@ -374,6 +405,9 @@ ve MainCamera'ya giriş/çıkış yönetimi yapmaz.
 - Camera Shots ekleme, tekrar eklemeyi engelleme, Create Shot ve bir adımda Undo/Redo akışını doğrula.
 - Başlangıç çekimini, ilk geçerli çekime dönüşü ve boş listenin mevcut kamerayı koruduğunu kontrol et.
 - Anında/yumuşak geçişi, hareketli çekim hedefini, geçişin yarıda değiştirilmesini ve 2D/3D kesmesini doğrula.
+- Cut/Gentle/Custom/Blur seçimlerini, Custom hız slider'ının iki ucunu ve açık süre API'sinin doğrusal davranışını doğrula.
+- Blur'da merkez netliğini, kenar bulanıklığını, başka kameraların etkilenmediğini ve geçiş yokken efektin kalktığını doğrula.
+- Blur sırasında yeniden seçim, pause, Release Shot, özellik kapatma ve Timeline devralmasında efekt durumunu kontrol et.
 - Çekim kamera ve ses bileşenlerinin kapatıldığını, çıkarma/kapatmada önceki durumlarının geri geldiğini kontrol et.
 - Seçilmeyen Dolly'nin beklediğini, yeniden seçimde devam ettiğini ve merkez Dolly ile yazma yarışı olmadığını doğrula.
 - Aktif çekim silinmesi/devre dışı kalması, son çekimin çıkarılması ve Release Shot durumlarını kontrol et.
@@ -403,3 +437,14 @@ tam snapshot geri yüklemesi, temiz sahne ve değişmeyen prefab override'ları 
 1.000 ağırlıklı merkez kompozisyon çağrısında managed bellek tahsisi `0` bayt ölçüldü.
 Testler görüntüsüz batch oturumunda çalıştırıldı; Game View görüntüsünün elle
 görsel değerlendirmesi yapılmadı.
+
+Manuel geçiş preset'leri aynı Unity sürümünde ayrı bir geçici projede 130
+doğrulamadan geçti. Cut/Gentle/Custom/Blur, hız sınırları, açık süre API'si,
+yarıda değiştirilen geçiş, pause, temizleme ve Timeline/MainCamera regresyonları
+kontrol edildi. Renderer kurulumunda iki Undo/Redo döngüsü, yerel asset kimliği,
+shader referansı ve kaydetme/yeniden içe aktarma kalıcılığı doğrulandı.
+Gerçek D3D11 GPU ile RenderTexture piksel karşılaştırmasında kenar kontrastı
+yaklaşık %63 azaldı; merkezde ve diğer kamerada fark `0` ölçüldü. Efekt temizlenince
+ilk görüntü geri geldi. Custom ve Blur için 1.000'er kararlı güncellemede managed
+bellek tahsisi `0` bayttı. Runtime, Editor ve Editor bağımlılığı içermeyen player
+kaynak derlemeleri geçti; tam player build ve elle Inspector/Game View testi yapılmadı.

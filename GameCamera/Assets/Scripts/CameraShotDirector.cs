@@ -15,8 +15,12 @@ public class CameraShotDirector : MonoBehaviour
     [SerializeField, Tooltip("Shot selected when play begins. If unavailable, the first usable shot in the list is selected.")]
     private DirectorsCamera startingShot = null;
 
-    [SerializeField, Min(0f), Tooltip("Transition duration used by the Inspector Activate buttons. 0 cuts immediately. Different projection modes always cut.")]
-    private float defaultBlendDuration;
+    [SerializeField, Tooltip("Manual shot transition: instant Cut, slow Gentle, adjustable Custom, or fast edge Blur. Different projection modes always cut. Timeline uses its own clip weights.")]
+    private CameraShotTransition transition = CameraShotTransition.Cut;
+
+    // Keep the existing serialized duration field; the Custom speed slider displays its reciprocal.
+    [SerializeField, Range(0.25f, 4f), Tooltip("Duration of the Custom transition in seconds. Transition Speed controls its inverse: higher speeds finish sooner.")]
+    private float defaultBlendDuration = 1f;
 
     private readonly Dictionary<DirectorsCamera, ShotRegistration> registrations =
         new Dictionary<DirectorsCamera, ShotRegistration>();
@@ -30,6 +34,10 @@ public class CameraShotDirector : MonoBehaviour
     private CameraState blendSource;
     private float blendDuration;
     private float blendElapsed;
+    private bool easeBlend;
+    private bool blurBlend;
+    private float blurStartStrength;
+    private float blurStrength;
     private bool hasSavedOutput;
     private bool runtimeInitialized;
     private bool hasStarted;
@@ -59,8 +67,34 @@ public class CameraShotDirector : MonoBehaviour
     /// <summary>Whether the output is holding its last evaluated Timeline pose.</summary>
     public bool IsHoldingShot => holdingShot;
 
-    /// <summary>Default transition duration used by the Inspector controls.</summary>
-    public float DefaultBlendDuration => defaultBlendDuration;
+    /// <summary>Preset used by ActivateShot(shot) and the Inspector Activate buttons.</summary>
+    public CameraShotTransition Transition
+    {
+        get => transition;
+        set => transition = SanitizeTransition(value);
+    }
+
+    /// <summary>Custom transition speed, from 0.25 to 4. Its duration is 1 / speed seconds.</summary>
+    public float TransitionSpeed
+    {
+        get => 1f / SanitizeCustomDuration(defaultBlendDuration);
+        set => defaultBlendDuration = 1f / SanitizeCustomDuration(value);
+    }
+
+    /// <summary>Duration of the selected manual preset in seconds. Cut is zero.</summary>
+    public float DefaultBlendDuration
+    {
+        get
+        {
+            switch (transition)
+            {
+                case CameraShotTransition.Gentle: return 1.25f;
+                case CameraShotTransition.Custom: return SanitizeCustomDuration(defaultBlendDuration);
+                case CameraShotTransition.Blur: return 0.35f;
+                default: return 0f;
+            }
+        }
+    }
 
     internal bool IsControllingOutput => hasSavedOutput;
 
@@ -93,7 +127,8 @@ public class CameraShotDirector : MonoBehaviour
 
     private void OnValidate()
     {
-        defaultBlendDuration = SanitizeDuration(defaultBlendDuration);
+        transition = SanitizeTransition(transition);
+        defaultBlendDuration = SanitizeCustomDuration(defaultBlendDuration);
         // OnValidate may run off the main thread. Component access is deferred to LateUpdate.
         shotsChanged = true;
     }
@@ -160,8 +195,20 @@ public class CameraShotDirector : MonoBehaviour
         return true;
     }
 
-    /// <summary>Selects a registered, enabled shot during play. Invalid durations cut immediately.</summary>
-    public bool ActivateShot(DirectorsCamera shot, float blendDuration = 0f)
+    /// <summary>Selects a registered, enabled shot using the configured manual transition preset.</summary>
+    public bool ActivateShot(DirectorsCamera shot)
+    {
+        return TryActivateShot(shot, DefaultBlendDuration, transition != CameraShotTransition.Cut,
+            transition == CameraShotTransition.Blur);
+    }
+
+    /// <summary>Selects a shot with an explicit linear, effect-free duration. Zero or invalid durations cut immediately.</summary>
+    public bool ActivateShot(DirectorsCamera shot, float blendDuration)
+    {
+        return TryActivateShot(shot, SanitizeDuration(blendDuration), false, false);
+    }
+
+    private bool TryActivateShot(DirectorsCamera shot, float duration, bool eased, bool withBlur)
     {
         if (IsTimelineControlled || !Application.isPlaying || !isActiveAndEnabled || !InitializeRuntime())
         {
@@ -177,7 +224,7 @@ public class CameraShotDirector : MonoBehaviour
             return false;
         }
 
-        SelectShot(registration, SanitizeDuration(blendDuration));
+        SelectShot(registration, duration, eased, withBlur);
         return true;
     }
 
@@ -189,6 +236,7 @@ public class CameraShotDirector : MonoBehaviour
             return;
         }
         holdingShot = false;
+        ClearTransitionBlur();
         activeRegistration = null;
         blendDuration = 0f;
         blendElapsed = 0f;
@@ -233,6 +281,7 @@ public class CameraShotDirector : MonoBehaviour
             hasSavedOutput = true;
         }
         timelineOwner = owner;
+        ClearTransitionBlur();
         heldOutput = current;
         holdingShot = true;
         blendDuration = 0f;
@@ -510,7 +559,7 @@ public class CameraShotDirector : MonoBehaviour
         ReleaseShot();
     }
 
-    private void SelectShot(ShotRegistration registration, float duration)
+    private void SelectShot(ShotRegistration registration, float duration, bool eased = false, bool withBlur = false)
     {
         holdingShot = false;
         if (!hasSavedOutput)
@@ -526,6 +575,10 @@ public class CameraShotDirector : MonoBehaviour
         blendElapsed = 0f;
         blendDuration = blendSource.Mode == destination.Mode && blendSource.Orthographic == destination.Orthographic
             ? duration : 0f;
+        easeBlend = eased;
+        blurBlend = withBlur && blendDuration > 0f;
+        // An interrupted Blur starts with its current strength instead of flashing back to a sharp image.
+        blurStartStrength = blurBlend ? blurStrength : 0f;
         ApplySelectedShot(destination);
     }
 
@@ -586,10 +639,42 @@ public class CameraShotDirector : MonoBehaviour
 
     private void ApplySelectedShot(CameraState destination)
     {
+        float progress = IsBlending ? blendElapsed / blendDuration : 1f;
+        float poseProgress = easeBlend ? Mathf.SmoothStep(0f, 1f, progress) : progress;
         CameraState state = IsBlending
-            ? CameraState.Interpolate(blendSource, destination, blendElapsed / blendDuration)
+            ? CameraState.Interpolate(blendSource, destination, poseProgress)
             : destination;
         state.Apply(cameraController, outputCamera, outputTransform);
+        if (blurBlend && progress < 1f)
+        {
+            blurStrength = Mathf.Lerp(Mathf.Sin(Mathf.PI * progress), 1f - progress, blurStartStrength);
+            CameraShotBlurFeature.SetBlur(outputCamera, blurStrength);
+        }
+        else
+        {
+            ClearTransitionBlur();
+        }
+    }
+
+    private void ClearTransitionBlur()
+    {
+        if (blurStrength > 0f)
+        {
+            CameraShotBlurFeature.ClearBlur(outputCamera);
+            blurStrength = 0f;
+        }
+    }
+
+    private static CameraShotTransition SanitizeTransition(CameraShotTransition value)
+    {
+        return value >= CameraShotTransition.Cut && value <= CameraShotTransition.Blur
+            ? value : CameraShotTransition.Cut;
+    }
+
+    private static float SanitizeCustomDuration(float value)
+    {
+        return float.IsNaN(value) || float.IsInfinity(value) || value <= 0f
+            ? 1f : Mathf.Clamp(value, 0.25f, 4f);
     }
 
     private static float SanitizeDuration(float duration)

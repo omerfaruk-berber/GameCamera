@@ -12,14 +12,17 @@ public class CameraShotDirectorEditor : Editor
 {
     private SerializedProperty shotsProperty;
     private SerializedProperty startingShotProperty;
+    private SerializedProperty transitionProperty;
     private SerializedProperty durationProperty;
     private ReorderableList shotList;
     private string assignmentError;
+    private string blurSetupError;
 
     private void OnEnable()
     {
         shotsProperty = serializedObject.FindProperty("shots");
         startingShotProperty = serializedObject.FindProperty("startingShot");
+        transitionProperty = serializedObject.FindProperty("transition");
         durationProperty = serializedObject.FindProperty("defaultBlendDuration");
         shotList = new ReorderableList(serializedObject, shotsProperty, true, true, true, true);
         shotList.drawHeaderCallback = rect => EditorGUI.LabelField(rect, "Shots");
@@ -50,10 +53,34 @@ public class CameraShotDirectorEditor : Editor
         serializedObject.Update();
         shotList.DoLayoutList();
         EditorGUILayout.PropertyField(startingShotProperty);
-        EditorGUILayout.PropertyField(durationProperty);
+        EditorGUI.BeginChangeCheck();
+        EditorGUILayout.PropertyField(transitionProperty);
+        bool selectedBlur = EditorGUI.EndChangeCheck() &&
+            transitionProperty.enumValueIndex == (int)CameraShotTransition.Blur;
+        if (transitionProperty.enumValueIndex == (int)CameraShotTransition.Custom)
+        {
+            float speed = 1f / Mathf.Clamp(durationProperty.floatValue, 0.25f, 4f);
+            EditorGUI.BeginChangeCheck();
+            speed = EditorGUILayout.Slider(new GUIContent("Transition Speed",
+                "Speed of the custom transition. Higher values reach the next shot faster; 1 means one second."), speed, 0.25f, 4f);
+            if (EditorGUI.EndChangeCheck())
+            {
+                durationProperty.floatValue = 1f / speed;
+            }
+        }
         if (serializedObject.ApplyModifiedProperties())
         {
+            blurSetupError = null;
+            if (selectedBlur)
+            {
+                CameraShotBlurEditorSetup.TryEnsureInstalled(director.GetComponent<Camera>(), out blurSetupError);
+            }
             SceneView.RepaintAll();
+        }
+
+        if (!string.IsNullOrEmpty(blurSetupError))
+        {
+            EditorGUILayout.HelpBox(blurSetupError, MessageType.Warning);
         }
 
         if (!string.IsNullOrEmpty(assignmentError))
@@ -163,10 +190,10 @@ public class CameraShotDirectorEditor : Editor
         using (new EditorGUI.DisabledScope(!Application.isPlaying || !director.isActiveAndEnabled ||
             director.IsTimelineControlled || shot == null))
         {
-            if (GUI.Button(activateRect, new GUIContent("Activate", "Selects this shot using Default Blend Duration.")))
+            if (GUI.Button(activateRect, new GUIContent("Activate", "Selects this shot using the configured transition.")))
             {
                 serializedObject.ApplyModifiedProperties();
-                director.ActivateShot(shot, director.DefaultBlendDuration);
+                director.ActivateShot(shot);
                 SceneView.RepaintAll();
             }
         }
